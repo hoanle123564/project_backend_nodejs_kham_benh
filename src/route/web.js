@@ -69,7 +69,7 @@ router.get("/api/all-doctor", getAllDoctor);
 router.get("/api/detail-doctor", getDetailDoctor);
 router.post("/api/save-doctor", authMiddleware, postInfoDoctor);
 router.post("/api/create-schedule-doctor", authMiddleware, CreateScheduleDoctor);
-router.get("/api/get-schedule-doctor", authMiddleware, GetcheScheduleDoctor);
+router.get("/api/get-schedule-doctor", GetcheScheduleDoctor);
 router.get("/api/get-list-patient-for-doctor", authMiddleware, getListPatientForDoctor);
 router.post("/api/send-remedy", authMiddleware, postSendRemedy);
 router.delete("/api/delete-schedule-doctor", authMiddleware, handleDeleteScheduleDoctor);

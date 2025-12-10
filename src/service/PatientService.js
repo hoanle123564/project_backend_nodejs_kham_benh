@@ -31,7 +31,7 @@ const bookAppointment = async (data) => {
       timeType,
       reason,
       timeString,
-      patientId     // <-- nếu login thì FE gửi lên patientId
+      patientId
     } = data;
 
     // Chuẩn hóa ngày
