@@ -1,8 +1,2 @@
 /node_modules
 .env
-.sequelizerc
-package-lock.json
-package.json
-.babelrc
-data.sql
-final_data.sql
