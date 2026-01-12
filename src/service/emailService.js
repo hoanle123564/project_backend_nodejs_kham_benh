@@ -32,7 +32,9 @@ const sendSimpleEmail = (dataSend) => {
                     </p>
 
                     <div style="margin: 15px 0;">
-                        <a href="${dataSend.redirectLink}" target="_blank"
+                        <a 
+                        href="${dataSend.redirectLink}" 
+                        target="_blank"
                            style="
                                 display:inline-block;
                                 background-color:#28a745;
