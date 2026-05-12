@@ -34,7 +34,7 @@ const handleUserLoginService = async (data) => {
         }
 
         const user = rows[0];
-        const checkPass = await bcrypt.compare(password, user.password);
+        const checkPass = await bcrypt.compare(password, user.password || "");
         if (!checkPass) {
             return {
                 errCode: 3,
@@ -91,6 +91,8 @@ const getAllUsersService = async (id) => {
 
         if (id === "ALL") {
             const [rows] = await connection.promise().query(`SELECT * FROM users`);
+            // loại bỏ mật khẩu
+            // duyệt qua các phần tử rồi sẽ loại bỏ trường mật khẩu ra và tạo ra biến mới tên rest
             const users = rows.map(({ password, ...rest }) => rest);
 
             return {
