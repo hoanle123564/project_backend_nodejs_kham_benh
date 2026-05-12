@@ -9,7 +9,8 @@ const {
     sendRemedy,
     deleteScheduleDoctor,
     GetListAppointment,
-    ListBooking
+    ListBooking,
+    getRelatedDoctorsById
 } = require("../service/DoctorService");
 const getTopDoctor = async (req, res) => {
     let limit = req.query.limit;
@@ -166,6 +167,20 @@ const getListBooking = async (req, res) => {
     }
 };
 
+const getRelatedDoctors = async (req, res) => {
+    try {
+        let doctorId = req.query.id;
+        let response = await getRelatedDoctorsById(doctorId);
+        return res.status(200).json(response);
+    } catch (error) {
+        console.log("getRelatedDoctors error", error);
+        return res.status(400).json({
+            errCode: -1,
+            errMessage: "Error from server",
+        });
+    }
+};
+
 module.exports = {
     getTopDoctor,
     getDetailDoctor,
@@ -177,5 +192,6 @@ module.exports = {
     postSendRemedy,
     handleDeleteScheduleDoctor,
     getListAppointmentForDoctor,
-    getListBooking
+    getListBooking,
+    getRelatedDoctors
 };

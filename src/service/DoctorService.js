@@ -730,6 +730,69 @@ const ListBooking = async (req, res) => {
   }
 };
 
+const getRelatedDoctorsById = async (doctorId, limit = 10) => {
+  const status = {};
+  try {
+    if (!doctorId) {
+      status.errCode = 1;
+      status.errMessage = "Missing required parameter: doctorId";
+      status.data = [];
+      return status;
+    }
+
+    // Lấy specialtyId của bác sĩ hiện tại
+    const [specialtyRows] = await connection.promise().query(
+      `SELECT specialtyId FROM doctor_info WHERE doctorId = ?`,
+      [doctorId]
+    );
+
+    if (specialtyRows.length === 0 || !specialtyRows[0].specialtyId) {
+      status.errCode = 0;
+      status.errMessage = "Doctor has no specialty";
+      status.data = [];
+      return status;
+    }
+
+    const specialtyId = specialtyRows[0].specialtyId;
+
+    // Lấy danh sách các bác sĩ có cùng specialtyId (loại trừ bác sĩ hiện tại)
+    const [rows] = await connection.promise().query(
+      `
+        SELECT 
+            u.id, u.email, u.firstName, u.lastName, u.address, u.gender,
+            u.positionId, u.roleId, u.image, u.phoneNumber,
+            p.value_vi AS positionVi, p.value_en AS positionEn,
+            g.value_vi AS genderVi, g.value_en AS genderEn,
+            m.description,
+            s.id AS specialtyId, s.name AS specialtyName, s.image AS specialtyImage
+        FROM users AS u
+        LEFT JOIN lookup AS p ON u.positionId = p.keyMap AND p.type = 'POSITION'
+        LEFT JOIN lookup AS g ON u.gender = g.keyMap AND g.type = 'GENDER'
+        LEFT JOIN doctor AS m ON m.doctorId = u.id
+        LEFT JOIN doctor_info AS di ON di.doctorId = u.id
+        LEFT JOIN specialty AS s ON s.id = di.specialtyId
+        WHERE u.roleId = 'R2' 
+          AND di.specialtyId = ? 
+          AND u.id != ?
+        ORDER BY u.createdAt DESC  
+        LIMIT ?;
+      `,
+      [specialtyId, doctorId, Number(limit)]
+    );
+
+    status.errCode = 0;
+    status.errMessage = "OK";
+    status.data = rows;
+    return status;
+  } catch (error) {
+    console.log("getRelatedDoctorsById error:", error);
+    status.errCode = 1;
+    status.errMessage = error.message || "Database error";
+    status.data = [];
+    return status;
+  }
+};
+
 module.exports = {
   getTopDoctorHome,
   getDetailDoctorById,
@@ -741,5 +804,6 @@ module.exports = {
   sendRemedy,
   deleteScheduleDoctor,
   GetListAppointment,
-  ListBooking
+  ListBooking,
+  getRelatedDoctorsById
 };
