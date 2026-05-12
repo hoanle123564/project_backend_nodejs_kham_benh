@@ -1,5 +1,5 @@
 const express = require('express')
-const bodyParser = require('body-parser')
+// const bodyParser = require('body-parser')
 const ViewEngine = require('../src/config/viewEngine')
 const initWebRoute = require('../src/route/web')
 const cors = require('cors')
@@ -14,8 +14,8 @@ app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ limit: "10mb", extended: true }));
 
 
-app.use(bodyParser.json({ limit: "10mb" }));
-app.use(bodyParser.urlencoded({ limit: "10mb", extended: true }));
+// app.use(bodyParser.json({ limit: "10mb" }));
+// app.use(bodyParser.urlencoded({ limit: "10mb", extended: true }));
 
 ViewEngine(app)
 app.use('/', initWebRoute);
