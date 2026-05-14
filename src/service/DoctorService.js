@@ -93,7 +93,7 @@ const getDetailDoctorById = async (doctorId) => {
                 u.phoneNumber, u.image, u.gender, u.positionId, u.roleId,
                 p.value_vi AS positionVi, p.value_en AS positionEn,
                 g.value_vi AS genderVi, g.value_en AS genderEn
-            FROM Users AS u
+            FROM users AS u
             LEFT JOIN lookup AS p 
                 ON u.positionId = p.keyMap AND p.type = 'POSITION'
             LEFT JOIN lookup AS g 
@@ -164,7 +164,7 @@ const getDetailDoctorById = async (doctorId) => {
     const [specialtyRows] = await connection.promise().query(
       `
             SELECT name AS specialtyName
-            FROM Specialty
+            FROM specialty
             WHERE id = ?
         `,
       [dc.specialtyId]
@@ -176,7 +176,7 @@ const getDetailDoctorById = async (doctorId) => {
     const [clinicDetailRows] = await connection.promise().query(
       `
             SELECT name AS clinicName, address AS clinicAddress
-            FROM Clinic
+            FROM clinic
             WHERE id = ?
         `,
       [dc.clinicId]
