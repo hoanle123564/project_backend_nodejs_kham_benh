@@ -2,6 +2,7 @@ const express = require("express");
 
 // middleware
 const authMiddleware = require("../MiiddleWare/authMiddleware");
+const adminMiddleware = require("../MiiddleWare/adminMiddleware");
 
 // user controller
 const {
@@ -12,6 +13,11 @@ const {
   handleDeleteNewUserAPI,
   getLookUp,
 } = require("../controller/userController");
+
+// admin controller
+const {
+  getAdminDashboardStatistics
+} = require("../controller/adminController");
 
 // doctor controller
 const {
@@ -55,6 +61,25 @@ const {
   handleDeleteClinic,
   handleEditClinic,
 } = require("../controller/clinicController");
+
+// post category controller
+const {
+  postCreatePostCategory,
+  getAllPostCategory,
+  getDetailPostCategoryById,
+  handleEditPostCategory,
+  handleDeletePostCategory,
+} = require("../controller/postCategoryController");
+
+// post controller
+const {
+  postCreatePost,
+  getAllPost,
+  getDetailPostById,
+  handleEditPost,
+  handleDeletePost,
+  handleChangeStatusPost,
+} = require("../controller/postController");
 const router = express.Router();
 
 router.post("/api/login", handleLogin);
@@ -63,6 +88,9 @@ router.post("/api/create-new-user", handleCreateNewUserAPI);
 router.put("/api/edit-user", authMiddleware, handleEditUserAPI);
 router.delete("/api/delete-user", authMiddleware, handleDeleteNewUserAPI);
 router.get("/api/lookup", getLookUp);
+
+// admin routes
+router.get("/api/admin/dashboard-statistics", authMiddleware, adminMiddleware, getAdminDashboardStatistics);
 
 // doctor routes
 router.get("/api/top-doctor", getTopDoctor);
@@ -99,5 +127,20 @@ router.delete("/api/delete-clinic", authMiddleware, handleDeleteClinic);
 router.put("/api/edit-clinic", authMiddleware, handleEditClinic);
 router.get("/api/get-clinic", getAllClinic);
 router.get("/api/get-detail-clinic-by-id", getDetailClinicById);
+
+// post category routes
+router.post("/api/create-post-category", authMiddleware, adminMiddleware, postCreatePostCategory);
+router.delete("/api/delete-post-category", authMiddleware, adminMiddleware, handleDeletePostCategory);
+router.put("/api/edit-post-category", authMiddleware, adminMiddleware, handleEditPostCategory);
+router.get("/api/get-post-category", authMiddleware, adminMiddleware, getAllPostCategory);
+router.get("/api/get-detail-post-category-by-id", authMiddleware, adminMiddleware, getDetailPostCategoryById);
+
+// post routes
+router.post("/api/create-post", authMiddleware, adminMiddleware, postCreatePost);
+router.delete("/api/delete-post", authMiddleware, adminMiddleware, handleDeletePost);
+router.put("/api/edit-post", authMiddleware, adminMiddleware, handleEditPost);
+router.put("/api/change-status-post", authMiddleware, adminMiddleware, handleChangeStatusPost);
+router.get("/api/get-post", authMiddleware, adminMiddleware, getAllPost);
+router.get("/api/get-detail-post-by-id", authMiddleware, adminMiddleware, getDetailPostById);
 
 module.exports = router;
