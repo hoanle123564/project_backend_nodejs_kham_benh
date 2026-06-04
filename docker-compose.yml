@@ -9,9 +9,4 @@ services:
       MYSQL_USER: root
       MYSQL_PASSWORD:
     ports:
-      - "3306:3306"
-    volumes:
-      - clinic_mysql_data:/var/lib/mysql
-
-volumes:
-  clinic_mysql_data:
+      - "3307:3306"
