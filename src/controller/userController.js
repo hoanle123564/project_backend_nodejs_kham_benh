@@ -2,6 +2,7 @@ const {
     handleUserLoginService,
     getAllUsersService,
     createNewUserService,
+    changePasswordService,
     deleteUserService,
     updateUserService,
     getLookUpService
@@ -68,6 +69,20 @@ const handleEditUserAPI = async (req, res) => {
     }
 };
 
+// CHANGE PASSWORD
+const handleChangePasswordAPI = async (req, res) => {
+    try {
+        const response = await changePasswordService(req.user?.id, req.body);
+        return res.status(200).json(response);
+    } catch (error) {
+        console.log("handleChangePasswordAPI error", error);
+        return res.status(400).json({
+            errCode: -1,
+            errMessage: "Error from server"
+        });
+    }
+};
+
 
 // DELETE USER
 const handleDeleteNewUserAPI = async (req, res) => {
@@ -104,6 +119,7 @@ module.exports = {
     handleGetAllUser,
     handleCreateNewUserAPI,
     handleEditUserAPI,
+    handleChangePasswordAPI,
     handleDeleteNewUserAPI,
     getLookUp
 };

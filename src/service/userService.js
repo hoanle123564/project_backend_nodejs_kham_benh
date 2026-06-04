@@ -209,6 +209,61 @@ const createNewUserService = async (data) => {
     }
 };
 
+// CHANGE PASSWORD
+const changePasswordService = async (userId, data) => {
+    try {
+        const { currentPassword, newPassword, confirmPassword } = data || {};
+
+        if (!userId || !currentPassword || !newPassword || !confirmPassword) {
+            return { errCode: 1, errMessage: "Missing required parameter" };
+        }
+
+        if (newPassword !== confirmPassword) {
+            return { errCode: 3, errMessage: "New password and confirm password do not match" };
+        }
+
+        if (newPassword === currentPassword) {
+            return { errCode: 4, errMessage: "New password must be different from current password" };
+        }
+
+        if (newPassword.length < 6) {
+            return { errCode: 6, errMessage: "New password must be at least 6 characters" };
+        }
+
+        const [rows] = await connection.promise().query(
+            `SELECT id, password FROM users WHERE id = ?`,
+            [userId]
+        );
+
+        if (rows.length === 0) {
+            return { errCode: 5, errMessage: "User not found" };
+        }
+
+        const user = rows[0];
+
+        if (!user.password) {
+            return { errCode: 5, errMessage: "This account does not support password change" };
+        }
+
+        const isCurrentPasswordCorrect = await bcrypt.compare(currentPassword, user.password);
+        if (!isCurrentPasswordCorrect) {
+            return { errCode: 2, errMessage: "Current password is incorrect" };
+        }
+
+        const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+        await connection.promise().query(
+            `UPDATE users SET password = ? WHERE id = ?`,
+            [hashedPassword, userId]
+        );
+
+        return { errCode: 0, errMessage: "Change password successfully" };
+    } catch (error) {
+        console.log("changePasswordService error:", error);
+        return { errCode: -1, errMessage: "Error from server" };
+    }
+};
+
 
 // DELETE USER
 const deleteUserService = async (id) => {
@@ -245,9 +300,11 @@ const deleteUserService = async (id) => {
 
             // Kiểm tra lịch khám bệnh đang hoạt động (không bao gồm S3 - Đã khám và S4 - Đã hủy)
             const [activeBookings] = await connection.promise().query(
-                `SELECT id FROM booking 
-                 WHERE doctorId = ? 
-                 AND statusId NOT IN ('S3', 'S4') 
+                `SELECT b.id
+                 FROM booking b
+                 INNER JOIN schedule s ON b.scheduleId = s.id
+                 WHERE s.doctorId = ?
+                 AND b.statusId NOT IN ('S3', 'S4')
                  LIMIT 1`,
                 [id]
             );
@@ -261,9 +318,11 @@ const deleteUserService = async (id) => {
 
             // Xóa tất cả booking đã hoàn thành hoặc đã hủy của bác sĩ
             await connection.promise().query(
-                `DELETE FROM booking 
-                 WHERE doctorId = ? 
-                 AND statusId IN ('S3', 'S4')`,
+                `DELETE b
+                 FROM booking b
+                 INNER JOIN schedule s ON b.scheduleId = s.id
+                 WHERE s.doctorId = ?
+                 AND b.statusId IN ('S3', 'S4')`,
                 [id]
             );
 
@@ -388,6 +447,7 @@ module.exports = {
     handleUserLoginService,
     getAllUsersService,
     createNewUserService,
+    changePasswordService,
     deleteUserService,
     updateUserService,
     getLookUpService

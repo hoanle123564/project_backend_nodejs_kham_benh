@@ -1,8 +1,8 @@
 const express = require("express");
 
 // middleware
-const authMiddleware = require("../MiiddleWare/authMiddleware");
-const adminMiddleware = require("../MiiddleWare/adminMiddleware");
+const authMiddleware = require("../MiddleWare/authMiddleware");
+const adminMiddleware = require("../MiddleWare/adminMiddleware");
 
 // user controller
 const {
@@ -10,6 +10,7 @@ const {
   handleGetAllUser,
   handleCreateNewUserAPI,
   handleEditUserAPI,
+  handleChangePasswordAPI,
   handleDeleteNewUserAPI,
   getLookUp,
 } = require("../controller/userController");
@@ -66,19 +67,27 @@ const {
 const {
   postCreatePostCategory,
   getAllPostCategory,
+  getPublicPostCategories,
   getDetailPostCategoryById,
+  getPublicPostCategoryDetail,
   handleEditPostCategory,
   handleDeletePostCategory,
+  handleUpdatePostCategoryOrder,
+  handleChangeStatusPostCategory,
 } = require("../controller/postCategoryController");
 
 // post controller
 const {
   postCreatePost,
   getAllPost,
+  getPublicPostListByCategory,
   getDetailPostById,
+  getPublicPostDetailBySlug,
+  getPublicRelatedPostList,
   handleEditPost,
   handleDeletePost,
   handleChangeStatusPost,
+  handleUpdatePostOrder,
 } = require("../controller/postController");
 const router = express.Router();
 
@@ -86,6 +95,7 @@ router.post("/api/login", handleLogin);
 router.get("/api/get-all-user", handleGetAllUser);
 router.post("/api/create-new-user", handleCreateNewUserAPI);
 router.put("/api/edit-user", authMiddleware, handleEditUserAPI);
+router.put("/api/change-password", authMiddleware, handleChangePasswordAPI);
 router.delete("/api/delete-user", authMiddleware, handleDeleteNewUserAPI);
 router.get("/api/lookup", getLookUp);
 
@@ -128,10 +138,19 @@ router.put("/api/edit-clinic", authMiddleware, handleEditClinic);
 router.get("/api/get-clinic", getAllClinic);
 router.get("/api/get-detail-clinic-by-id", getDetailClinicById);
 
+// public post routes
+router.get("/api/public/post-categories", getPublicPostCategories);
+router.get("/api/public/post-category-detail", getPublicPostCategoryDetail);
+router.get("/api/public/posts-by-category", getPublicPostListByCategory);
+router.get("/api/public/post-detail", getPublicPostDetailBySlug);
+router.get("/api/public/related-posts", getPublicRelatedPostList);
+
 // post category routes
 router.post("/api/create-post-category", authMiddleware, adminMiddleware, postCreatePostCategory);
 router.delete("/api/delete-post-category", authMiddleware, adminMiddleware, handleDeletePostCategory);
 router.put("/api/edit-post-category", authMiddleware, adminMiddleware, handleEditPostCategory);
+router.put("/api/update-post-category-order", authMiddleware, adminMiddleware, handleUpdatePostCategoryOrder);
+router.put("/api/change-status-post-category", authMiddleware, adminMiddleware, handleChangeStatusPostCategory);
 router.get("/api/get-post-category", authMiddleware, adminMiddleware, getAllPostCategory);
 router.get("/api/get-detail-post-category-by-id", authMiddleware, adminMiddleware, getDetailPostCategoryById);
 
@@ -140,6 +159,7 @@ router.post("/api/create-post", authMiddleware, adminMiddleware, postCreatePost)
 router.delete("/api/delete-post", authMiddleware, adminMiddleware, handleDeletePost);
 router.put("/api/edit-post", authMiddleware, adminMiddleware, handleEditPost);
 router.put("/api/change-status-post", authMiddleware, adminMiddleware, handleChangeStatusPost);
+router.put("/api/update-post-order", authMiddleware, adminMiddleware, handleUpdatePostOrder);
 router.get("/api/get-post", authMiddleware, adminMiddleware, getAllPost);
 router.get("/api/get-detail-post-by-id", authMiddleware, adminMiddleware, getDetailPostById);
 

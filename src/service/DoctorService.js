@@ -212,23 +212,68 @@ const getDetailDoctorById = async (doctorId) => {
 
 const getAllDoctorHome = async () => {
   const status = {};
+  try {
+    const [rows] = await connection.promise().query(
+      `
+        SELECT
+          u.*,
+          p.value_vi AS positionVi,
+          p.value_en AS positionEn,
+          m.description,
+          di.specialtyId,
+          di.clinicId,
+          s.name AS specialtyName,
+          c.name AS clinicName,
+          c.address AS clinicAddress
+        FROM users AS u
+        LEFT JOIN lookup AS p
+          ON u.positionId = p.keyMap AND p.type = 'POSITION'
+        LEFT JOIN doctor AS m
+          ON m.doctorId = u.id
+        LEFT JOIN doctor_info AS di
+          ON di.doctorId = u.id
+        LEFT JOIN specialty AS s
+          ON s.id = di.specialtyId
+        LEFT JOIN clinic AS c
+          ON c.id = di.clinicId
+        WHERE u.roleId = 'R2'
+        ORDER BY u.createdAt DESC
+      `
+    );
 
-  let [rows] = await connection
-    .promise()
-    .query(`SELECT * FROM users WHERE roleId = 'R2'`);
-  status.errCode = 0;
-  status.errMessage = `0K`;
-  status.data = rows;
-  return status;
+    status.errCode = 0;
+    status.errMessage = "OK";
+    status.data = rows;
+    return status;
+  } catch (error) {
+    console.log("getAllDoctorHome error:", error);
+    status.errCode = 1;
+    status.errMessage = error.message || "Database error";
+    status.data = [];
+    return status;
+  }
+};
+
+const hasVisibleEditorContent = (value) => {
+  if (!value || typeof value !== "string") return false;
+
+  const plainText = value
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .trim();
+
+  return plainText.length > 0;
 };
 
 const saveDetailInfoDoctor = async (data) => {
   const status = {};
   try {
+    const contentHTML = data?.contentHTML || "";
+    const contentMarkdown = data?.contentMarkdown || contentHTML;
+
     if (
       !data ||
-      !data.contentHTML ||
-      !data.contentMarkdown ||
+      !hasVisibleEditorContent(contentHTML) ||
       !data.doctorId ||
       !data.priceId ||
       !data.paymentId ||
@@ -242,17 +287,7 @@ const saveDetailInfoDoctor = async (data) => {
       return status;
     }
 
-    const {
-      contentHTML,
-      contentMarkdown,
-      doctorId,
-      priceId,
-      paymentId,
-      clinicId,
-      specialtyId,
-      province,
-      description,
-    } = data;
+    const { doctorId, priceId, paymentId, clinicId, specialtyId, province, description } = data;
 
     console.log(">>> Save doctor detail:", data);
 
@@ -460,15 +495,17 @@ const GetListPatientForDoctor = async (doctorId, date) => {
     const normalizedDate = normalizeDate(date);
     const [rows] = await connection.promise().query(
       `
-         SELECT b.id, b.date, b.timeType, b.statusId, b.reason,
-         b.doctorId, b.patientId,
+         SELECT b.id, b.scheduleId, b.date, s.timeType, b.statusId, b.reason,
+         s.doctorId, b.patientId,
                 u.email, u.firstName, u.lastName, u.address, u.phoneNumber,
                 a.value_vi AS timeTypeVi, a.value_en AS timeTypeEn
          FROM booking AS b
+            INNER JOIN schedule AS s ON b.scheduleId = s.id
             LEFT JOIN users AS u ON b.patientId = u.id
             LEFT JOIN lookup AS a 
-                ON b.timeType = a.keyMap AND a.type = 'TIME'
-         WHERE b.doctorId = ? AND b.date = ? AND b.statusId = 'S2'
+                ON s.timeType = a.keyMap AND a.type = 'TIME'
+         WHERE s.doctorId = ? AND b.date = ? AND b.statusId = 'S2'
+         ORDER BY CAST(SUBSTRING(s.timeType, 2) AS UNSIGNED) ASC
         `,
       [doctorId, normalizedDate]
     );
@@ -492,11 +529,9 @@ const sendRemedy = async (data) => {
     if (
       !data ||
       !data.email ||
-      !data.doctorId ||
-      !data.patientId ||
+      !data.bookingId ||
       !data.time ||
       !data.image ||
-      !data.date ||
       !data.firstNamePatient ||
       !data.lastNamePatient
     ) {
@@ -506,25 +541,42 @@ const sendRemedy = async (data) => {
     }
     const {
       email,
-      doctorId,
-      patientId,
-      date,
+      bookingId,
       image,
       time,
       firstNamePatient,
       lastNamePatient,
       reason,
     } = data;
-    const normalizedDate = normalizeDate(date);
 
     // Cập nhật trạng thái booking
+    const [bookingRows] = await connection.promise().query(
+      `
+        SELECT b.id, u.firstName, u.lastName
+        FROM booking b
+        INNER JOIN schedule s
+          ON b.scheduleId = s.id
+        INNER JOIN users u
+          ON s.doctorId = u.id
+        WHERE b.id = ? AND b.statusId = 'S2'
+        LIMIT 1
+      `,
+      [bookingId]
+    );
+
+    if (bookingRows.length === 0) {
+      status.errCode = 2;
+      status.errMessage = "Appointment does not exist or is not ready for completion";
+      return status;
+    }
+
     await connection.promise().query(
       `
         UPDATE booking
         SET statusId = 'S3'
-        WHERE doctorId = ? AND patientId = ? AND date = ? AND statusId = 'S2'
+        WHERE id = ? AND statusId = 'S2'
       `,
-      [doctorId, patientId, normalizedDate]
+      [bookingId]
     );
 
     // Gửi email (giả lập)
@@ -533,9 +585,7 @@ const sendRemedy = async (data) => {
     // await new Promise((resolve) => setTimeout(resolve, 1000)); // Giả lập delay
 
     // Lấy tên bác sĩ và bệnh nhân
-    let [doctorInfo] = await connection
-      .promise()
-      .query("SELECT firstName, lastName FROM users WHERE id = ?", [doctorId]);
+    const doctorInfo = bookingRows;
     const doctorName =
       doctorInfo.length > 0
         ? `${doctorInfo[0].firstName} ${doctorInfo[0].lastName}`
@@ -579,10 +629,7 @@ const deleteScheduleDoctor = async (scheduleid) => {
       `
         SELECT b.id, b.statusId
         FROM booking b
-        INNER JOIN schedule s ON b.doctorId = s.doctorId 
-          AND b.date = s.date 
-          AND b.timeType = s.timeType
-        WHERE s.id = ? AND b.statusId IN ('S1', 'S2')
+        WHERE b.scheduleId = ? AND b.statusId IN ('S1', 'S2')
       `,
       [scheduleid]
     );
@@ -624,14 +671,16 @@ const GetListAppointment = async (doctorId) => {
     }
     const [rows] = await connection.promise().query(
       `
-         SELECT b.id, b.date, b.timeType, b.statusId, b.reason, b.patientId,
-                u.email, u.firstName, u.lastName, u.address, u.phoneNumber,
+         SELECT b.id, b.scheduleId, b.date, s.timeType, b.statusId, b.reason, b.patientId,
+                s.doctorId, u.email, u.firstName, u.lastName, u.address, u.phoneNumber,
                 a.value_vi AS timeTypeVi, a.value_en AS timeTypeEn
          FROM booking AS b
+            INNER JOIN schedule AS s ON b.scheduleId = s.id
             LEFT JOIN users AS u ON b.patientId = u.id
             LEFT JOIN lookup AS a 
-                ON b.timeType = a.keyMap AND a.type = 'TIME'
-          WHERE b.doctorId = ?
+                ON s.timeType = a.keyMap AND a.type = 'TIME'
+          WHERE s.doctorId = ?
+          ORDER BY b.date DESC, CAST(SUBSTRING(s.timeType, 2) AS UNSIGNED) ASC
         `,
       [doctorId]
     );
@@ -656,8 +705,9 @@ const ListBooking = async (req, res) => {
       `
       SELECT 
           b.id,
+          b.scheduleId,
           b.date,
-          b.timeType,
+          s.timeType,
           b.statusId,
           b.reason,
           b.token,
@@ -684,10 +734,12 @@ const ListBooking = async (req, res) => {
           patient.gender AS patientGender
 
       FROM booking b
+      JOIN schedule s
+          ON b.scheduleId = s.id
 
       -- JOIN bảng users cho bác sĩ
       JOIN users doctor 
-          ON b.doctorId = doctor.id
+          ON s.doctorId = doctor.id
 
       -- JOIN bảng users cho bệnh nhân
       JOIN users patient
@@ -700,10 +752,10 @@ const ListBooking = async (req, res) => {
 
       -- Lookup TIME
       LEFT JOIN lookup lt
-          ON b.timeType = lt.keyMap
+          ON s.timeType = lt.keyMap
          AND lt.type = 'TIME'
 
-      ORDER BY b.date DESC, b.timeType ASC
+      ORDER BY b.date DESC, CAST(SUBSTRING(s.timeType, 2) AS UNSIGNED) ASC
       `
     );
 

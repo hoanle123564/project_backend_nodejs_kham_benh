@@ -147,6 +147,50 @@ const buildPostPayload = async (data, executor = connection.promise(), excludeId
     };
 };
 
+const buildCategoryMetaSelect = (postAlias = "p") => `
+    COALESCE((
+        SELECT GROUP_CONCAT(
+            CONCAT_WS('::', pc.id, pc.name, pc.slug)
+            ORDER BY pc.displayOrder ASC, pc.id ASC
+            SEPARATOR '|||'
+        )
+        FROM post_category_detail pcd
+        INNER JOIN post_category pc ON pc.id = pcd.postCategoryId
+        WHERE pcd.postId = ${postAlias}.id
+          AND pc.isActive = 1
+    ), '') AS categoryMeta
+`;
+
+const parseCategoryMeta = (value) => {
+    if (!value) {
+        return [];
+    }
+
+    return String(value)
+        .split("|||")
+        .map((item) => item.trim())
+        .filter(Boolean)
+        .map((item) => {
+            const [id, name, slug] = item.split("::");
+            return {
+                id: Number(id),
+                name: name || "",
+                slug: slug || "",
+            };
+        })
+        .filter((item) => Number.isInteger(item.id) && item.id > 0 && item.slug);
+};
+
+const formatPublicPost = (item) => {
+    const categories = parseCategoryMeta(item?.categoryMeta);
+    const { categoryMeta, ...postData } = item || {};
+
+    return {
+        ...postData,
+        categories,
+    };
+};
+
 // Thêm các liên kết giữa bài viết và danh mục vào bảng post_category_detail.
 const insertPostCategories = async (postId, categoryIds, db) => {
     if (!categoryIds || categoryIds.length === 0) {
@@ -158,6 +202,74 @@ const insertPostCategories = async (postId, categoryIds, db) => {
         `INSERT INTO post_category_detail (postId, postCategoryId) VALUES ?`,
         [values]
     );
+};
+
+// Cập nhật hàng loạt displayOrder cho bài viết sau khi admin kéo thả sắp xếp.
+const updatePostOrder = async (items) => {
+    let db;
+
+    try {
+        if (!Array.isArray(items) || items.length === 0) {
+            return {
+                errCode: 1,
+                errMessage: "Post order items must be a non-empty array"
+            };
+        }
+
+        const normalizedItems = items.map((item) => ({
+            id: Number(item?.id),
+            displayOrder: parseDisplayOrder(item?.displayOrder),
+        }));
+
+        const hasInvalidItem = normalizedItems.some(
+            (item) => !Number.isInteger(item.id) || item.id <= 0 || item.displayOrder === null
+        );
+
+        if (hasInvalidItem) {
+            return {
+                errCode: 2,
+                errMessage: "Each item must include a valid id and displayOrder"
+            };
+        }
+
+        db = await connection.promise().getConnection();
+        await db.beginTransaction();
+
+        for (const item of normalizedItems) {
+            const [rows] = await db.query(`SELECT id FROM post WHERE id = ?`, [item.id]);
+            if (rows.length === 0) {
+                await db.rollback();
+                return {
+                    errCode: 3,
+                    errMessage: `The post with id ${item.id} does not exist`
+                };
+            }
+
+            await db.query(
+                `UPDATE post SET displayOrder = ? WHERE id = ?`,
+                [item.displayOrder, item.id]
+            );
+        }
+
+        await db.commit();
+        return {
+            errCode: 0,
+            errMessage: "OK"
+        };
+    } catch (error) {
+        if (db) {
+            await db.rollback();
+        }
+        console.log("updatePostOrder error:", error);
+        return {
+            errCode: 1,
+            errMessage: "Error from server"
+        };
+    } finally {
+        if (db) {
+            db.release();
+        }
+    }
 };
 
 // Tạo mới bài viết và lưu danh mục liên kết trong cùng một transaction.
@@ -341,6 +453,117 @@ const getPost = async (query) => {
     }
 };
 
+// Lấy danh sách bài viết public theo category slug và chỉ trả về bài active.
+const getPublicPostsByCategorySlug = async (query) => {
+    try {
+        const categorySlug = String(query?.categorySlug || "").trim();
+        const page = parsePositiveInt(query?.page, DEFAULT_PAGE);
+        const limit = parsePositiveInt(query?.limit, DEFAULT_LIMIT);
+        const offset = (page - 1) * limit;
+
+        if (!categorySlug) {
+            return {
+                errCode: 1,
+                errMessage: "categorySlug is required",
+                data: {
+                    category: null,
+                    posts: [],
+                    total: 0,
+                    totalPages: 0,
+                    currentPage: page
+                }
+            };
+        }
+
+        const [categoryRows] = await connection.promise().query(
+            `SELECT * FROM post_category WHERE slug = ? AND isActive = 1 LIMIT 1`,
+            [categorySlug]
+        );
+
+        if (categoryRows.length === 0) {
+            return {
+                errCode: 2,
+                errMessage: `The post category with slug ${categorySlug} does not exist`,
+                data: {
+                    category: null,
+                    posts: [],
+                    total: 0,
+                    totalPages: 0,
+                    currentPage: page
+                }
+            };
+        }
+
+        const category = categoryRows[0];
+
+        const [countRows] = await connection.promise().query(
+            `
+                SELECT COUNT(DISTINCT p.id) AS total
+                FROM post p
+                WHERE p.isActive = 1
+                  AND EXISTS (
+                    SELECT 1
+                    FROM post_category_detail pcd
+                    INNER JOIN post_category pc ON pc.id = pcd.postCategoryId
+                    WHERE pcd.postId = p.id
+                      AND pc.slug = ?
+                      AND pc.isActive = 1
+                  )
+            `,
+            [categorySlug]
+        );
+
+        const total = countRows[0]?.total || 0;
+        const totalPages = total > 0 ? Math.ceil(total / limit) : 0;
+
+        const [rows] = await connection.promise().query(
+            `
+                SELECT
+                    p.*,
+                    ${buildCategoryMetaSelect("p")}
+                FROM post p
+                WHERE p.isActive = 1
+                  AND EXISTS (
+                    SELECT 1
+                    FROM post_category_detail pcd
+                    INNER JOIN post_category pc ON pc.id = pcd.postCategoryId
+                    WHERE pcd.postId = p.id
+                      AND pc.slug = ?
+                      AND pc.isActive = 1
+                  )
+                ORDER BY p.displayOrder ASC, p.updatedAt DESC, p.id DESC
+                LIMIT ? OFFSET ?
+            `,
+            [categorySlug, limit, offset]
+        );
+
+        return {
+            errCode: 0,
+            errMessage: "OK",
+            data: {
+                category,
+                posts: rows.map(formatPublicPost),
+                total,
+                totalPages,
+                currentPage: page
+            }
+        };
+    } catch (error) {
+        console.log("getPublicPostsByCategorySlug error:", error);
+        return {
+            errCode: 1,
+            errMessage: "Error from server",
+            data: {
+                category: null,
+                posts: [],
+                total: 0,
+                totalPages: 0,
+                currentPage: DEFAULT_PAGE
+            }
+        };
+    }
+};
+
 // Lấy chi tiết một bài viết kèm danh sách categoryIds đã được gán.
 const getPostDetailById = async (postId) => {
     try {
@@ -384,6 +607,151 @@ const getPostDetailById = async (postId) => {
             errCode: 1,
             errMessage: "Error from server",
             data: {}
+        };
+    }
+};
+
+// Lấy chi tiết bài viết public theo cặp categorySlug + postSlug để chặn sai quan hệ.
+const getPublicPostDetail = async (query) => {
+    try {
+        const categorySlug = String(query?.categorySlug || "").trim();
+        const postSlug = String(query?.postSlug || "").trim();
+
+        if (!categorySlug || !postSlug) {
+            return {
+                errCode: 1,
+                errMessage: "Missing required parameters",
+                data: {}
+            };
+        }
+
+        const [rows] = await connection.promise().query(
+            `
+                SELECT
+                    p.*,
+                    ${buildCategoryMetaSelect("p")}
+                FROM post p
+                WHERE p.isActive = 1
+                  AND p.slug = ?
+                  AND EXISTS (
+                    SELECT 1
+                    FROM post_category_detail pcd
+                    INNER JOIN post_category pc ON pc.id = pcd.postCategoryId
+                    WHERE pcd.postId = p.id
+                      AND pc.slug = ?
+                      AND pc.isActive = 1
+                  )
+                LIMIT 1
+            `,
+            [postSlug, categorySlug]
+        );
+
+        if (rows.length === 0) {
+            return {
+                errCode: 2,
+                errMessage: `The post with slug ${postSlug} does not exist in category ${categorySlug}`,
+                data: {}
+            };
+        }
+
+        const post = formatPublicPost(rows[0]);
+        const currentCategory = (post.categories || []).find((item) => item.slug === categorySlug) || null;
+
+        return {
+            errCode: 0,
+            errMessage: "OK",
+            data: {
+                ...post,
+                currentCategory
+            }
+        };
+    } catch (error) {
+        console.log("getPublicPostDetail error:", error);
+        return {
+            errCode: 1,
+            errMessage: "Error from server",
+            data: {}
+        };
+    }
+};
+
+const getPublicRelatedPosts = async (query) => {
+    try {
+        const categorySlug = String(query?.categorySlug || "").trim();
+        const postSlug = String(query?.postSlug || "").trim();
+        const limit = parsePositiveInt(query?.limit, 7);
+
+        if (!categorySlug || !postSlug) {
+            return {
+                errCode: 1,
+                errMessage: "Missing required parameters",
+                data: []
+            };
+        }
+
+        const [currentPostRows] = await connection.promise().query(
+            `
+                SELECT p.id
+                FROM post p
+                WHERE p.isActive = 1
+                  AND p.slug = ?
+                  AND EXISTS (
+                    SELECT 1
+                    FROM post_category_detail pcd
+                    INNER JOIN post_category pc ON pc.id = pcd.postCategoryId
+                    WHERE pcd.postId = p.id
+                      AND pc.slug = ?
+                      AND pc.isActive = 1
+                  )
+                LIMIT 1
+            `,
+            [postSlug, categorySlug]
+        );
+
+        if (currentPostRows.length === 0) {
+            return {
+                errCode: 2,
+                errMessage: "Post not found",
+                data: []
+            };
+        }
+
+        const currentPostId = currentPostRows[0].id;
+        const [rows] = await connection.promise().query(
+            `
+                SELECT
+                    p.*,
+                    ${buildCategoryMetaSelect("p")}
+                FROM post p
+                WHERE p.isActive = 1
+                  AND p.id != ?
+                  AND EXISTS (
+                    SELECT 1
+                    FROM post_category_detail related_pcd
+                    INNER JOIN post_category pc ON pc.id = related_pcd.postCategoryId
+                    INNER JOIN post_category_detail current_pcd
+                        ON current_pcd.postCategoryId = related_pcd.postCategoryId
+                    WHERE related_pcd.postId = p.id
+                      AND current_pcd.postId = ?
+                      AND pc.isActive = 1
+                  )
+                ORDER BY p.displayOrder ASC, p.updatedAt DESC, p.id DESC
+                LIMIT ?
+            `,
+            [currentPostId, currentPostId, limit]
+        );
+
+        return {
+            errCode: 0,
+            errMessage: "OK",
+            data: rows.map(formatPublicPost)
+        };
+    } catch (error) {
+        console.log("getPublicRelatedPosts error:", error);
+        return {
+            errCode: 1,
+            errMessage: "Error from server",
+            data: []
         };
     }
 };
@@ -558,8 +926,12 @@ const changeStatusPost = async (data) => {
 module.exports = {
     createPost,
     getPost,
+    getPublicPostsByCategorySlug,
     getPostDetailById,
+    getPublicPostDetail,
+    getPublicRelatedPosts,
     editPost,
     deletePost,
-    changeStatusPost
+    changeStatusPost,
+    updatePostOrder
 };
