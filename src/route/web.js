@@ -33,7 +33,9 @@ const {
   handleDeleteScheduleDoctor,
   getListAppointmentForDoctor,
   getListBooking,
-  getRelatedDoctors
+  getRelatedDoctors,
+  handleUpdateDoctorInfoOrder,
+  handleChangeStatusDoctorInfo
 } = require("../controller/doctorController");
 
 // patient controller
@@ -52,6 +54,8 @@ const {
   getDetailSpecialtyById,
   handleDeleteSpecialty,
   handleEditSpecialty,
+  handleUpdateSpecialtyOrder,
+  handleChangeStatusSpecialty,
 } = require("../controller/specialtyController");
 
 // clinic controller
@@ -61,6 +65,8 @@ const {
   getDetailClinicById,
   handleDeleteClinic,
   handleEditClinic,
+  handleUpdateClinicOrder,
+  handleChangeStatusClinic,
 } = require("../controller/clinicController");
 
 // post category controller
@@ -115,6 +121,8 @@ router.delete("/api/delete-schedule-doctor", authMiddleware, handleDeleteSchedul
 router.get("/api/get-list-booking-appointment-doctor", getListAppointmentForDoctor);
 router.get("/api/get-all-list-booking", getListBooking);
 router.get("/api/get-related-doctors", getRelatedDoctors);
+router.put("/api/update-doctor-info-order", authMiddleware, adminMiddleware, handleUpdateDoctorInfoOrder);
+router.put("/api/change-status-doctor-info", authMiddleware, adminMiddleware, handleChangeStatusDoctorInfo);
 
 // patient routes
 router.post("/api/patient-book-appointment", postBookAppointment);
@@ -128,6 +136,8 @@ router.post("/api/cancel-book-appointment", authMiddleware, postCancelBookAppoin
 router.post("/api/create-specialty", authMiddleware, postCreateSpecialty);
 router.delete("/api/delete-specialty", authMiddleware, handleDeleteSpecialty);
 router.put("/api/edit-specialty", authMiddleware, handleEditSpecialty);
+router.put("/api/update-specialty-order", authMiddleware, adminMiddleware, handleUpdateSpecialtyOrder);
+router.put("/api/change-status-specialty", authMiddleware, adminMiddleware, handleChangeStatusSpecialty);
 router.get("/api/get-specialty", getAllSpecialty);
 router.get("/api/get-detail-specialty-by-id", getDetailSpecialtyById);
 
@@ -135,6 +145,8 @@ router.get("/api/get-detail-specialty-by-id", getDetailSpecialtyById);
 router.post("/api/create-clinic", authMiddleware, postCreateClinic);
 router.delete("/api/delete-clinic", authMiddleware, handleDeleteClinic);
 router.put("/api/edit-clinic", authMiddleware, handleEditClinic);
+router.put("/api/update-clinic-order", authMiddleware, adminMiddleware, handleUpdateClinicOrder);
+router.put("/api/change-status-clinic", authMiddleware, adminMiddleware, handleChangeStatusClinic);
 router.get("/api/get-clinic", getAllClinic);
 router.get("/api/get-detail-clinic-by-id", getDetailClinicById);
 

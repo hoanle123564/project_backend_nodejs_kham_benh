@@ -10,7 +10,9 @@ const {
     deleteScheduleDoctor,
     GetListAppointment,
     ListBooking,
-    getRelatedDoctorsById
+    getRelatedDoctorsById,
+    updateDoctorInfoOrder,
+    changeStatusDoctorInfo
 } = require("../service/DoctorService");
 const getTopDoctor = async (req, res) => {
     let limit = req.query.limit;
@@ -42,7 +44,7 @@ const getAllDoctor = async (req, res) => {
 };
 const getDetailDoctor = async (req, res) => {
     try {
-        let respone = await getDetailDoctorById(req.query.id);
+        let respone = await getDetailDoctorById(req.query);
         return res.status(200).json(respone);
     } catch (error) {
         console.log("getDetailDoctor error", error);
@@ -181,6 +183,32 @@ const getRelatedDoctors = async (req, res) => {
     }
 };
 
+const handleUpdateDoctorInfoOrder = async (req, res) => {
+    try {
+        let response = await updateDoctorInfoOrder(req.body?.items);
+        return res.status(200).json(response);
+    } catch (error) {
+        console.log("handleUpdateDoctorInfoOrder error", error);
+        return res.status(400).json({
+            errCode: -1,
+            errMessage: "Error from server",
+        });
+    }
+};
+
+const handleChangeStatusDoctorInfo = async (req, res) => {
+    try {
+        let response = await changeStatusDoctorInfo(req.body);
+        return res.status(200).json(response);
+    } catch (error) {
+        console.log("handleChangeStatusDoctorInfo error", error);
+        return res.status(400).json({
+            errCode: -1,
+            errMessage: "Error from server",
+        });
+    }
+};
+
 module.exports = {
     getTopDoctor,
     getDetailDoctor,
@@ -193,5 +221,7 @@ module.exports = {
     handleDeleteScheduleDoctor,
     getListAppointmentForDoctor,
     getListBooking,
-    getRelatedDoctors
+    getRelatedDoctors,
+    handleUpdateDoctorInfoOrder,
+    handleChangeStatusDoctorInfo
 };

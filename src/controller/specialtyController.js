@@ -1,4 +1,12 @@
-const { createSpecialty, getSpecialty, getSpecialtyDetailById, editSpecialty, deleteSpecialty } = require("../service/specialtyService");
+const {
+    createSpecialty,
+    getSpecialty,
+    getSpecialtyDetail,
+    editSpecialty,
+    deleteSpecialty,
+    updateSpecialtyOrder,
+    changeStatusSpecialty
+} = require("../service/specialtyService");
 
 const postCreateSpecialty = async (req, res) => {
     try {
@@ -15,7 +23,7 @@ const postCreateSpecialty = async (req, res) => {
 
 const getAllSpecialty = async (req, res) => {
     try {
-        let respone = await getSpecialty();
+        let respone = await getSpecialty(req.query);
         return res.status(200).json(respone);
     } catch (error) {
         console.log("getAllSpecialty error", error);
@@ -28,9 +36,7 @@ const getAllSpecialty = async (req, res) => {
 
 const getDetailSpecialtyById = async (req, res) => {
     try {
-        const specialtyId = req.query.id;
-        const location = req.query.location;
-        let response = await getSpecialtyDetailById(specialtyId, location);
+        let response = await getSpecialtyDetail(req.query);
         return res.status(200).json(response);
     } catch (error) {
         console.log("getDetailSpecialtyById error", error);
@@ -71,10 +77,38 @@ const handleEditSpecialty = async (req, res) => {
     }
 };
 
+const handleUpdateSpecialtyOrder = async (req, res) => {
+    try {
+        let response = await updateSpecialtyOrder(req.body?.items);
+        return res.status(200).json(response);
+    } catch (error) {
+        console.log("handleUpdateSpecialtyOrder error", error);
+        return res.status(400).json({
+            errCode: -1,
+            errMessage: "Error from server",
+        });
+    }
+};
+
+const handleChangeStatusSpecialty = async (req, res) => {
+    try {
+        let response = await changeStatusSpecialty(req.body);
+        return res.status(200).json(response);
+    } catch (error) {
+        console.log("handleChangeStatusSpecialty error", error);
+        return res.status(400).json({
+            errCode: -1,
+            errMessage: "Error from server",
+        });
+    }
+};
+
 module.exports = {
     postCreateSpecialty,
     getAllSpecialty,
     getDetailSpecialtyById,
     handleDeleteSpecialty,
     handleEditSpecialty,
+    handleUpdateSpecialtyOrder,
+    handleChangeStatusSpecialty,
 };

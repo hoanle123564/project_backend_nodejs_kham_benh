@@ -1,9 +1,11 @@
 const {
     createClinic,
     getClinic,
-    getClinicDetailById,
+    getClinicDetail,
     deleteClinic,
-    editClinic
+    editClinic,
+    updateClinicOrder,
+    changeStatusClinic
 } = require("../service/ClinicService");
 
 const postCreateClinic = async (req, res) => {
@@ -20,7 +22,7 @@ const postCreateClinic = async (req, res) => {
 };
 const getAllClinic = async (req, res) => {
     try {
-        let respone = await getClinic();
+        let respone = await getClinic(req.query);
         return res.status(200).json(respone);
     } catch (error) {
         console.log("getAllClinic error", error);
@@ -33,9 +35,7 @@ const getAllClinic = async (req, res) => {
 
 const getDetailClinicById = async (req, res) => {
     try {
-        const clinicId = req.query.id;
-        const location = req.query.location;
-        let response = await getClinicDetailById(clinicId, location);
+        let response = await getClinicDetail(req.query);
         return res.status(200).json(response);
     } catch (error) {
         console.log("getDetailClinicById error", error);
@@ -75,4 +75,38 @@ const handleEditClinic = async (req, res) => {
     }
 };
 
-module.exports = { postCreateClinic, getAllClinic, getDetailClinicById, handleDeleteClinic, handleEditClinic };
+const handleUpdateClinicOrder = async (req, res) => {
+    try {
+        let response = await updateClinicOrder(req.body?.items);
+        return res.status(200).json(response);
+    } catch (error) {
+        console.log("handleUpdateClinicOrder error", error);
+        return res.status(400).json({
+            errCode: -1,
+            errMessage: "Error from server",
+        });
+    }
+};
+
+const handleChangeStatusClinic = async (req, res) => {
+    try {
+        let response = await changeStatusClinic(req.body);
+        return res.status(200).json(response);
+    } catch (error) {
+        console.log("handleChangeStatusClinic error", error);
+        return res.status(400).json({
+            errCode: -1,
+            errMessage: "Error from server",
+        });
+    }
+};
+
+module.exports = {
+    postCreateClinic,
+    getAllClinic,
+    getDetailClinicById,
+    handleDeleteClinic,
+    handleEditClinic,
+    handleUpdateClinicOrder,
+    handleChangeStatusClinic,
+};

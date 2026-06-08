@@ -1,6 +1,46 @@
 const connection = require("../config/data");
 const moment = require("moment");
 const { sendResultEmail } = require("./emailService");
+const {
+  normalizeSlug,
+  parseOptionalDisplayOrder,
+  parseOptionalIsActive,
+  getNextDisplayOrder,
+  buildUniqueSlug,
+  updateDisplayOrderBatch,
+  changeActiveStatus,
+} = require("./contentMetaService");
+
+const buildDoctorSlugSource = (doctor) => {
+  const fullName = `${doctor?.firstName || ""} ${doctor?.lastName || ""}`.trim();
+  return fullName || `doctor-${doctor?.id || doctor?.doctorId || ""}`;
+};
+
+const resolveDoctorIdForDetail = async ({ id, slug }) => {
+  const doctorSlug = String(slug || "").trim();
+  const doctorId = Number(id);
+
+  if (doctorSlug) {
+    const [rows] = await connection.promise().query(
+      `
+        SELECT di.doctorId
+        FROM doctor_info di
+        INNER JOIN users u ON u.id = di.doctorId
+        WHERE di.slug = ? AND di.isActive = 1 AND u.roleId = 'R2'
+        LIMIT 1
+      `,
+      [doctorSlug]
+    );
+
+    return rows?.[0]?.doctorId || null;
+  }
+
+  if (Number.isInteger(doctorId) && doctorId > 0) {
+    return doctorId;
+  }
+
+  return null;
+};
 
 const getTopDoctorHome = async (limit) => {
   const status = {};
@@ -34,7 +74,11 @@ const getTopDoctorHome = async (limit) => {
             -- Specialty 
             s.id AS specialtyId,
             s.name AS specialtyName,
-            s.image AS specialtyImage
+            s.image AS specialtyImage,
+            di.id AS doctorInfoId,
+            di.slug,
+            di.isActive,
+            di.displayOrder
 
         FROM users AS u
 
@@ -57,12 +101,19 @@ const getTopDoctorHome = async (limit) => {
         ORDER BY u.createdAt DESC  
         LIMIT ?;
             `,
-      [limitNum]
+      [Math.max(limitNum * 5, 50)]
     );
 
     status.errCode = 0;
     status.errMessage = "OK";
-    status.data = rows;
+    status.data = rows
+      .filter((item) => Number(item.isActive) === 1)
+      .sort((firstItem, secondItem) => {
+        const firstOrder = Number(firstItem.displayOrder) || 0;
+        const secondOrder = Number(secondItem.displayOrder) || 0;
+        return firstOrder - secondOrder;
+      })
+      .slice(0, limitNum);
     return status;
   } catch (error) {
     console.log("getTopDoctorHome error:", error);
@@ -73,10 +124,14 @@ const getTopDoctorHome = async (limit) => {
   }
 };
 
-const getDetailDoctorById = async (doctorId) => {
+const getDetailDoctorById = async (query) => {
   const status = {};
 
   try {
+    const doctorId = await resolveDoctorIdForDetail(
+      typeof query === "object" ? query : { id: query }
+    );
+
     if (!doctorId) {
       return {
         errCode: 1,
@@ -128,7 +183,8 @@ const getDetailDoctorById = async (doctorId) => {
     // LẤY doctor_info
     const [clinicRows] = await connection.promise().query(
       `
-            SELECT doctorId, priceId, paymentId, clinicId, province, specialtyId
+            SELECT id AS doctorInfoId, doctorId, slug, isActive, displayOrder,
+                   priceId, paymentId, clinicId, province, specialtyId
             FROM doctor_info
             WHERE doctorId = ?
         `,
@@ -163,7 +219,7 @@ const getDetailDoctorById = async (doctorId) => {
     // LẤY SPECIALTY
     const [specialtyRows] = await connection.promise().query(
       `
-            SELECT name AS specialtyName
+            SELECT id AS specialtyId, name AS specialtyName, slug AS specialtySlug
             FROM specialty
             WHERE id = ?
         `,
@@ -175,7 +231,7 @@ const getDetailDoctorById = async (doctorId) => {
     // LẤY CLINIC
     const [clinicDetailRows] = await connection.promise().query(
       `
-            SELECT name AS clinicName, address AS clinicAddress
+            SELECT id AS clinicId, name AS clinicName, slug AS clinicSlug, address AS clinicAddress
             FROM clinic
             WHERE id = ?
         `,
@@ -220,9 +276,16 @@ const getAllDoctorHome = async () => {
           p.value_vi AS positionVi,
           p.value_en AS positionEn,
           m.description,
+          di.id AS doctorInfoId,
+          di.slug,
+          di.isActive,
+          di.displayOrder,
+          di.province,
           di.specialtyId,
           di.clinicId,
+          s.slug AS specialtySlug,
           s.name AS specialtyName,
+          c.slug AS clinicSlug,
           c.name AS clinicName,
           c.address AS clinicAddress
         FROM users AS u
@@ -237,7 +300,7 @@ const getAllDoctorHome = async () => {
         LEFT JOIN clinic AS c
           ON c.id = di.clinicId
         WHERE u.roleId = 'R2'
-        ORDER BY u.createdAt DESC
+        ORDER BY di.displayOrder ASC, u.createdAt DESC
       `
     );
 
@@ -291,6 +354,24 @@ const saveDetailInfoDoctor = async (data) => {
 
     console.log(">>> Save doctor detail:", data);
 
+    const [doctorUserRows] = await connection.promise().query(
+      `SELECT id, firstName, lastName FROM users WHERE id = ? AND roleId = 'R2'`,
+      [doctorId]
+    );
+
+    if (doctorUserRows.length === 0) {
+      status.errCode = 2;
+      status.errMessage = `The doctor with id ${doctorId} does not exist`;
+      return status;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(data, "image")) {
+      await connection.promise().query(
+        `UPDATE users SET image = ? WHERE id = ? AND roleId = 'R2'`,
+        [data.image || null, doctorId]
+      );
+    }
+
     // ====== doctor ======
     const [checkMarkdown] = await connection
       .promise()
@@ -319,26 +400,65 @@ const saveDetailInfoDoctor = async (data) => {
     // ====== doctor_info ======
     const [checkClinic] = await connection
       .promise()
-      .query(`SELECT id FROM doctor_info WHERE doctorId = ?`, [doctorId]);
+      .query(`SELECT id, slug, isActive, displayOrder FROM doctor_info WHERE doctorId = ?`, [doctorId]);
+
+    const existingDoctorInfo = checkClinic[0] || {};
+    const slugSource =
+      String(data?.slug || "").trim() ||
+      existingDoctorInfo.slug ||
+      buildDoctorSlugSource(doctorUserRows[0]);
+    const normalizedSlug = normalizeSlug(slugSource);
+
+    if (!normalizedSlug) {
+      status.errCode = 3;
+      status.errMessage = "Slug is required";
+      return status;
+    }
+
+    const displayOrderFallback = checkClinic.length > 0
+      ? existingDoctorInfo.displayOrder
+      : await getNextDisplayOrder("doctor_info");
+    const displayOrder = parseOptionalDisplayOrder(data?.displayOrder, displayOrderFallback);
+    const isActive = parseOptionalIsActive(data?.isActive, existingDoctorInfo.isActive ?? 1);
+
+    if (displayOrder === null) {
+      status.errCode = 4;
+      status.errMessage = "Display order must be a valid number";
+      return status;
+    }
+
+    if (isActive === null) {
+      status.errCode = 5;
+      status.errMessage = "isActive must be 0 or 1";
+      return status;
+    }
+
+    const slug = await buildUniqueSlug(
+      "doctor_info",
+      normalizedSlug,
+      existingDoctorInfo.id || null
+    );
+
     if (checkClinic.length > 0) {
       // Cập nhật nếu đã tồn tại
       await connection.promise().query(
         `
        UPDATE doctor_info
-          SET priceId = ?, paymentId = ?, province = ?, specialtyId = ?, clinicId = ?
+          SET priceId = ?, paymentId = ?, province = ?, specialtyId = ?, clinicId = ?,
+              slug = ?, isActive = ?, displayOrder = ?
           WHERE doctorId = ?
         `,
-        [priceId, paymentId, province, specialtyId, clinicId, doctorId]
+        [priceId, paymentId, province, specialtyId, clinicId, slug, isActive, displayOrder, doctorId]
       );
     } else {
       // Thêm mới nếu chưa có
       await connection.promise().query(
         `
         INSERT INTO doctor_info 
-          (doctorId, priceId, paymentId, province, specialtyId, clinicId)
-          VALUES (?, ?, ?, ?, ?, ?)
+          (doctorId, slug, isActive, displayOrder, priceId, paymentId, province, specialtyId, clinicId)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         `,
-        [doctorId, priceId, paymentId, province, specialtyId, clinicId]
+        [doctorId, slug, isActive, displayOrder, priceId, paymentId, province, specialtyId, clinicId]
       );
     }
 
@@ -816,7 +936,11 @@ const getRelatedDoctorsById = async (doctorId, limit = 10) => {
             p.value_vi AS positionVi, p.value_en AS positionEn,
             g.value_vi AS genderVi, g.value_en AS genderEn,
             m.description,
-            s.id AS specialtyId, s.name AS specialtyName, s.image AS specialtyImage
+            di.id AS doctorInfoId,
+            di.slug,
+            di.isActive,
+            di.displayOrder,
+            s.id AS specialtyId, s.name AS specialtyName, s.image AS specialtyImage, s.slug AS specialtySlug
         FROM users AS u
         LEFT JOIN lookup AS p ON u.positionId = p.keyMap AND p.type = 'POSITION'
         LEFT JOIN lookup AS g ON u.gender = g.keyMap AND g.type = 'GENDER'
@@ -825,8 +949,10 @@ const getRelatedDoctorsById = async (doctorId, limit = 10) => {
         LEFT JOIN specialty AS s ON s.id = di.specialtyId
         WHERE u.roleId = 'R2' 
           AND di.specialtyId = ? 
+          AND di.isActive = 1
+          AND s.isActive = 1
           AND u.id != ?
-        ORDER BY u.createdAt DESC  
+        ORDER BY di.displayOrder ASC, u.createdAt DESC
         LIMIT ?;
       `,
       [specialtyId, doctorId, Number(limit)]
@@ -845,6 +971,15 @@ const getRelatedDoctorsById = async (doctorId, limit = 10) => {
   }
 };
 
+const updateDoctorInfoOrder = async (items) => {
+  return updateDisplayOrderBatch("doctor_info", items, "doctor info");
+};
+
+const changeStatusDoctorInfo = async (data) => {
+  const idColumn = data?.doctorId && !data?.id ? "doctorId" : "id";
+  return changeActiveStatus("doctor_info", data, "doctor info", idColumn);
+};
+
 module.exports = {
   getTopDoctorHome,
   getDetailDoctorById,
@@ -857,5 +992,7 @@ module.exports = {
   deleteScheduleDoctor,
   GetListAppointment,
   ListBooking,
-  getRelatedDoctorsById
+  getRelatedDoctorsById,
+  updateDoctorInfoOrder,
+  changeStatusDoctorInfo
 };
