@@ -10,6 +10,7 @@ const {
   updateDisplayOrderBatch,
   changeActiveStatus,
 } = require("./contentMetaService");
+const { getBookingListScope } = require("./clinicAccessService");
 
 const buildDoctorSlugSource = (doctor) => {
   const fullName = `${doctor?.firstName || ""} ${doctor?.lastName || ""}`.trim();
@@ -69,7 +70,7 @@ const getTopDoctorHome = async (limit) => {
             g.value_vi AS genderVi,
             g.value_en AS genderEn,
 
-            m.description,
+            di.description,
 
             -- Specialty 
             s.id AS specialtyId,
@@ -87,9 +88,6 @@ const getTopDoctorHome = async (limit) => {
 
         LEFT JOIN lookup AS g 
             ON u.gender = g.keyMap AND g.type = 'GENDER'
-
-        LEFT JOIN doctor AS m 
-            ON m.doctorId = u.id
 
         LEFT JOIN doctor_info AS di
             ON di.doctorId = u.id
@@ -168,25 +166,21 @@ const getDetailDoctorById = async (query) => {
 
     const user = userRows[0];
 
-    // LẤY doctor
-    const [markdownRows] = await connection.promise().query(
-      `
-            SELECT contentHTML, contentMarkdown, description
-            FROM doctor
-            WHERE doctorId = ?
-        `,
-      [doctorId]
-    );
-
-    const doctor = markdownRows[0] || {};
-
     // LẤY doctor_info
     const [clinicRows] = await connection.promise().query(
       `
-            SELECT id AS doctorInfoId, doctorId, slug, isActive, displayOrder,
-                   priceId, paymentId, clinicId, province, specialtyId
-            FROM doctor_info
-            WHERE doctorId = ?
+            SELECT
+              di.id AS doctorInfoId, di.doctorId, di.slug, di.isActive, di.displayOrder,
+              di.contentHTML, di.contentMarkdown, di.description,
+              di.priceId, di.paymentId, di.clinicId, di.specialtyId,
+              c.clinicTypeId, c.address AS clinicAddress, c.provinceCode, c.districtCode, c.wardCode,
+              COALESCE(lp.value_vi, c.provinceCode) AS province
+            FROM doctor_info di
+            LEFT JOIN clinic c
+              ON c.id = di.clinicId
+            LEFT JOIN lookup lp
+              ON lp.keyMap = c.provinceCode AND lp.type = 'PROVINCE'
+            WHERE di.doctorId = ?
         `,
       [doctorId]
     );
@@ -231,9 +225,14 @@ const getDetailDoctorById = async (query) => {
     // LẤY CLINIC
     const [clinicDetailRows] = await connection.promise().query(
       `
-            SELECT id AS clinicId, name AS clinicName, slug AS clinicSlug, address AS clinicAddress
-            FROM clinic
-            WHERE id = ?
+            SELECT
+              c.id AS clinicId, c.name AS clinicName, c.slug AS clinicSlug,
+              c.address AS clinicAddress, c.clinicTypeId, c.provinceCode, c.districtCode, c.wardCode,
+              COALESCE(lp.value_vi, c.provinceCode) AS province
+            FROM clinic c
+            LEFT JOIN lookup lp
+              ON lp.keyMap = c.provinceCode AND lp.type = 'PROVINCE'
+            WHERE c.id = ?
         `,
       [dc.clinicId]
     );
@@ -243,7 +242,6 @@ const getDetailDoctorById = async (query) => {
     // GỘP TẤT CẢ LẠI
     const data = {
       ...user,
-      ...doctor,
       ...dc,
       ...price,
       ...payment,
@@ -272,33 +270,51 @@ const getAllDoctorHome = async () => {
     const [rows] = await connection.promise().query(
       `
         SELECT
-          u.*,
+          u.id,
+          u.email,
+          u.firstName,
+          u.lastName,
+          u.address,
+          u.gender,
+          u.positionId,
+          u.roleId,
+          u.image,
+          u.phoneNumber,
+          u.provinceCode AS userProvinceCode,
+          u.districtCode AS userDistrictCode,
+          u.wardCode AS userWardCode,
+          u.createdAt,
+          u.updatedAt,
           p.value_vi AS positionVi,
           p.value_en AS positionEn,
-          m.description,
+          di.description,
           di.id AS doctorInfoId,
           di.slug,
           di.isActive,
           di.displayOrder,
-          di.province,
           di.specialtyId,
           di.clinicId,
           s.slug AS specialtySlug,
           s.name AS specialtyName,
           c.slug AS clinicSlug,
           c.name AS clinicName,
-          c.address AS clinicAddress
+          c.address AS clinicAddress,
+          c.clinicTypeId,
+          c.provinceCode,
+          c.districtCode,
+          c.wardCode,
+          COALESCE(lp.value_vi, c.provinceCode) AS province
         FROM users AS u
         LEFT JOIN lookup AS p
           ON u.positionId = p.keyMap AND p.type = 'POSITION'
-        LEFT JOIN doctor AS m
-          ON m.doctorId = u.id
         LEFT JOIN doctor_info AS di
           ON di.doctorId = u.id
         LEFT JOIN specialty AS s
           ON s.id = di.specialtyId
         LEFT JOIN clinic AS c
           ON c.id = di.clinicId
+        LEFT JOIN lookup AS lp
+          ON lp.keyMap = c.provinceCode AND lp.type = 'PROVINCE'
         WHERE u.roleId = 'R2'
         ORDER BY di.displayOrder ASC, u.createdAt DESC
       `
@@ -342,7 +358,6 @@ const saveDetailInfoDoctor = async (data) => {
       !data.paymentId ||
       !data.specialtyId ||
       !data.clinicId ||
-      !data.province ||
       !data.description
     ) {
       status.errCode = 1;
@@ -350,7 +365,7 @@ const saveDetailInfoDoctor = async (data) => {
       return status;
     }
 
-    const { doctorId, priceId, paymentId, clinicId, specialtyId, province, description } = data;
+    const { doctorId, priceId, paymentId, clinicId, specialtyId, description } = data;
 
     console.log(">>> Save doctor detail:", data);
 
@@ -365,6 +380,15 @@ const saveDetailInfoDoctor = async (data) => {
       return status;
     }
 
+    const [checkClinic] = await connection
+      .promise()
+      .query(
+        `SELECT id, slug, isActive, displayOrder, clinicId FROM doctor_info WHERE doctorId = ?`,
+        [doctorId]
+      );
+
+    const existingDoctorInfo = checkClinic[0] || {};
+
     if (Object.prototype.hasOwnProperty.call(data, "image")) {
       await connection.promise().query(
         `UPDATE users SET image = ? WHERE id = ? AND roleId = 'R2'`,
@@ -372,37 +396,6 @@ const saveDetailInfoDoctor = async (data) => {
       );
     }
 
-    // ====== doctor ======
-    const [checkMarkdown] = await connection
-      .promise()
-      .query(`SELECT id FROM doctor WHERE doctorId = ?`, [doctorId]);
-    console.log("checkMarkdown", checkMarkdown);
-
-    if (checkMarkdown.length > 0) {
-      await connection.promise().query(
-        `
-          UPDATE doctor
-          SET contentHTML = ?, contentMarkdown = ?, description = ?
-          WHERE doctorId = ?
-        `,
-        [contentHTML, contentMarkdown, description || null, doctorId]
-      );
-    } else {
-      await connection.promise().query(
-        `
-          INSERT INTO doctor (contentHTML, contentMarkdown, description, doctorId)
-          VALUES (?, ?, ?, ?)
-        `,
-        [contentHTML, contentMarkdown, description || null, doctorId]
-      );
-    }
-
-    // ====== doctor_info ======
-    const [checkClinic] = await connection
-      .promise()
-      .query(`SELECT id, slug, isActive, displayOrder FROM doctor_info WHERE doctorId = ?`, [doctorId]);
-
-    const existingDoctorInfo = checkClinic[0] || {};
     const slugSource =
       String(data?.slug || "").trim() ||
       existingDoctorInfo.slug ||
@@ -444,21 +437,46 @@ const saveDetailInfoDoctor = async (data) => {
       await connection.promise().query(
         `
        UPDATE doctor_info
-          SET priceId = ?, paymentId = ?, province = ?, specialtyId = ?, clinicId = ?,
+          SET contentHTML = ?, contentMarkdown = ?, description = ?,
+              priceId = ?, paymentId = ?, specialtyId = ?, clinicId = ?,
               slug = ?, isActive = ?, displayOrder = ?
           WHERE doctorId = ?
         `,
-        [priceId, paymentId, province, specialtyId, clinicId, slug, isActive, displayOrder, doctorId]
+        [
+          contentHTML,
+          contentMarkdown,
+          description || null,
+          priceId,
+          paymentId,
+          specialtyId,
+          clinicId,
+          slug,
+          isActive,
+          displayOrder,
+          doctorId,
+        ]
       );
     } else {
       // Thêm mới nếu chưa có
       await connection.promise().query(
         `
         INSERT INTO doctor_info 
-          (doctorId, slug, isActive, displayOrder, priceId, paymentId, province, specialtyId, clinicId)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          (doctorId, contentHTML, contentMarkdown, description, slug, isActive, displayOrder, priceId, paymentId, specialtyId, clinicId)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `,
-        [doctorId, slug, isActive, displayOrder, priceId, paymentId, province, specialtyId, clinicId]
+        [
+          doctorId,
+          contentHTML,
+          contentMarkdown,
+          description || null,
+          slug,
+          isActive,
+          displayOrder,
+          priceId,
+          paymentId,
+          specialtyId,
+          clinicId,
+        ]
       );
     }
 
@@ -819,8 +837,17 @@ const GetListAppointment = async (doctorId) => {
 };
 
 
-const ListBooking = async (req, res) => {
+const ListBooking = async (user) => {
   try {
+    const scope = getBookingListScope(user);
+    if (!scope.allowed) {
+      return {
+        errCode: 403,
+        errMessage: "Permission denied",
+        data: [],
+      };
+    }
+
     const [rows] = await connection.promise().query(
       `
       SELECT 
@@ -861,6 +888,12 @@ const ListBooking = async (req, res) => {
       JOIN users doctor 
           ON s.doctorId = doctor.id
 
+      LEFT JOIN doctor_info di
+          ON di.doctorId = s.doctorId
+
+      LEFT JOIN clinic c
+          ON c.id = di.clinicId
+
       -- JOIN bảng users cho bệnh nhân
       JOIN users patient
           ON b.patientId = patient.id
@@ -875,8 +908,10 @@ const ListBooking = async (req, res) => {
           ON s.timeType = lt.keyMap
          AND lt.type = 'TIME'
 
+      ${scope.whereClause}
       ORDER BY b.date DESC, CAST(SUBSTRING(s.timeType, 2) AS UNSIGNED) ASC
-      `
+      `,
+      scope.params
     );
 
     if (!rows || rows.length === 0) {
@@ -935,7 +970,7 @@ const getRelatedDoctorsById = async (doctorId, limit = 10) => {
             u.positionId, u.roleId, u.image, u.phoneNumber,
             p.value_vi AS positionVi, p.value_en AS positionEn,
             g.value_vi AS genderVi, g.value_en AS genderEn,
-            m.description,
+            di.description,
             di.id AS doctorInfoId,
             di.slug,
             di.isActive,
@@ -944,7 +979,6 @@ const getRelatedDoctorsById = async (doctorId, limit = 10) => {
         FROM users AS u
         LEFT JOIN lookup AS p ON u.positionId = p.keyMap AND p.type = 'POSITION'
         LEFT JOIN lookup AS g ON u.gender = g.keyMap AND g.type = 'GENDER'
-        LEFT JOIN doctor AS m ON m.doctorId = u.id
         LEFT JOIN doctor_info AS di ON di.doctorId = u.id
         LEFT JOIN specialty AS s ON s.id = di.specialtyId
         WHERE u.roleId = 'R2' 

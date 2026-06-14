@@ -418,20 +418,31 @@ const updateUserService = async (data) => {
 
 
 // GET ALL LOOKUP
-const getLookUpService = async (type) => {
+const getLookUpService = async (type, parentKeyMap) => {
     try {
         if (!type) {
             return { errCode: 1, errMessage: "Missing required parameter", data: [] };
+        }
+
+        const params = [type];
+        const whereConditions = [`type = ?`];
+
+        if (parentKeyMap !== undefined && parentKeyMap !== null && String(parentKeyMap).trim() !== "") {
+            whereConditions.push(`parentKeyMap = ?`);
+            params.push(String(parentKeyMap).trim());
         }
 
         const [rows] = await connection.promise().query(
             `
             SELECT *
             FROM lookup
-            WHERE type = ?
-            ORDER BY STR_TO_DATE(SUBSTRING_INDEX(value_vi, ' - ', 1), '%H:%i')
+            WHERE ${whereConditions.join(" AND ")}
+            ORDER BY
+                CASE WHEN type = 'TIME' THEN STR_TO_DATE(SUBSTRING_INDEX(value_vi, ' - ', 1), '%H:%i') END ASC,
+                value_vi ASC,
+                id ASC
             `,
-            [type]
+            params
         );
 
         return { errCode: 0, errMessage: "OK", data: rows };

@@ -68,6 +68,12 @@ const {
   handleUpdateClinicOrder,
   handleChangeStatusClinic,
 } = require("../controller/clinicController");
+const {
+  getAllClinicDepartment,
+  postCreateClinicDepartment,
+  handleEditClinicDepartment,
+  handleChangeStatusClinicDepartment,
+} = require("../controller/clinicDepartmentController");
 
 // post category controller
 const {
@@ -118,8 +124,8 @@ router.get("/api/get-schedule-doctor", GetcheScheduleDoctor);
 router.get("/api/get-list-patient-for-doctor", authMiddleware, getListPatientForDoctor);
 router.post("/api/send-remedy", authMiddleware, postSendRemedy);
 router.delete("/api/delete-schedule-doctor", authMiddleware, handleDeleteScheduleDoctor);
-router.get("/api/get-list-booking-appointment-doctor", getListAppointmentForDoctor);
-router.get("/api/get-all-list-booking", getListBooking);
+router.get("/api/get-list-booking-appointment-doctor", authMiddleware, getListAppointmentForDoctor);
+router.get("/api/get-all-list-booking", authMiddleware, getListBooking);
 router.get("/api/get-related-doctors", getRelatedDoctors);
 router.put("/api/update-doctor-info-order", authMiddleware, adminMiddleware, handleUpdateDoctorInfoOrder);
 router.put("/api/change-status-doctor-info", authMiddleware, adminMiddleware, handleChangeStatusDoctorInfo);
@@ -142,13 +148,17 @@ router.get("/api/get-specialty", getAllSpecialty);
 router.get("/api/get-detail-specialty-by-id", getDetailSpecialtyById);
 
 // clinic routes
-router.post("/api/create-clinic", authMiddleware, postCreateClinic);
+router.post("/api/create-clinic", authMiddleware, adminMiddleware, postCreateClinic);
 router.delete("/api/delete-clinic", authMiddleware, handleDeleteClinic);
 router.put("/api/edit-clinic", authMiddleware, handleEditClinic);
 router.put("/api/update-clinic-order", authMiddleware, adminMiddleware, handleUpdateClinicOrder);
 router.put("/api/change-status-clinic", authMiddleware, adminMiddleware, handleChangeStatusClinic);
 router.get("/api/get-clinic", getAllClinic);
 router.get("/api/get-detail-clinic-by-id", getDetailClinicById);
+router.get("/api/get-clinic-department", authMiddleware, getAllClinicDepartment);
+router.post("/api/create-clinic-department", authMiddleware, postCreateClinicDepartment);
+router.put("/api/edit-clinic-department", authMiddleware, handleEditClinicDepartment);
+router.put("/api/change-status-clinic-department", authMiddleware, handleChangeStatusClinicDepartment);
 
 // public post routes
 router.get("/api/public/post-categories", getPublicPostCategories);

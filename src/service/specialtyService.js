@@ -155,13 +155,21 @@ const getSpecialtyDetail = async ({ id, slug, location }) => {
         }
 
         if (location && location !== "ALL") {
-            doctorWhere.push(`di.province = ?`);
-            doctorParams.push(location);
+            doctorWhere.push(`(c.provinceCode = ? OR lp.value_vi = ? OR lp.value_en = ?)`);
+            doctorParams.push(location, location, location);
         }
 
         const [doctorRows] = await connection.promise().query(
-            `SELECT di.id, di.doctorId, di.slug, di.province, di.isActive, di.displayOrder
+            `SELECT
+                di.id, di.doctorId, di.slug, di.isActive, di.displayOrder,
+                di.clinicId, c.clinicTypeId, c.address AS clinicAddress,
+                c.provinceCode, c.districtCode, c.wardCode,
+                COALESCE(lp.value_vi, c.provinceCode) AS province
              FROM doctor_info di
+             LEFT JOIN clinic c
+               ON c.id = di.clinicId
+             LEFT JOIN lookup lp
+               ON lp.keyMap = c.provinceCode AND lp.type = 'PROVINCE'
              WHERE ${doctorWhere.join(" AND ")}
              ORDER BY di.displayOrder ASC, di.id ASC`,
             doctorParams

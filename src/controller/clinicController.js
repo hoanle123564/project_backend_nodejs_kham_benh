@@ -7,6 +7,10 @@ const {
     updateClinicOrder,
     changeStatusClinic
 } = require("../service/ClinicService");
+const {
+    FORBIDDEN_RESPONSE,
+    canManageClinic,
+} = require("../service/clinicAccessService");
 
 const postCreateClinic = async (req, res) => {
     try {
@@ -48,6 +52,11 @@ const getDetailClinicById = async (req, res) => {
 const handleDeleteClinic = async (req, res) => {
     try {
         const clinicId = req.body.id;
+        const allowed = await canManageClinic(req.user, clinicId);
+        if (!allowed) {
+            return res.status(403).json(FORBIDDEN_RESPONSE);
+        }
+
         let response = await deleteClinic(clinicId);
         return res.status(200).json(response);
     }
@@ -63,6 +72,11 @@ const handleDeleteClinic = async (req, res) => {
 const handleEditClinic = async (req, res) => {
     try {
         const data = req.body;
+        const allowed = await canManageClinic(req.user, data?.id);
+        if (!allowed) {
+            return res.status(403).json(FORBIDDEN_RESPONSE);
+        }
+
         let response = await editClinic(data);
         return res.status(200).json(response);
     }

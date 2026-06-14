@@ -9,6 +9,49 @@ const {
     changeActiveStatus,
 } = require("./contentMetaService");
 
+const normalizeOptionalString = (value) => {
+    if (value === undefined || value === null) {
+        return null;
+    }
+
+    const normalized = String(value).trim();
+    return normalized || null;
+};
+
+const validateClinicTypeId = (clinicTypeId) => {
+    if (!clinicTypeId) {
+        return null;
+    }
+
+    if (!["CT1", "CT2"].includes(clinicTypeId)) {
+        return { errCode: 5, errMessage: "clinicTypeId must be CT1 or CT2" };
+    }
+
+    return null;
+};
+
+const normalizeManagerUserId = async (managerUserId) => {
+    if (managerUserId === undefined || managerUserId === null || String(managerUserId).trim() === "") {
+        return { value: null };
+    }
+
+    const normalizedManagerId = Number(managerUserId);
+    if (!Number.isInteger(normalizedManagerId) || normalizedManagerId <= 0) {
+        return { error: { errCode: 6, errMessage: "managerUserId must be a valid user id" } };
+    }
+
+    const [rows] = await connection.promise().query(
+        `SELECT id, roleId FROM users WHERE id = ? LIMIT 1`,
+        [normalizedManagerId]
+    );
+
+    if (rows.length === 0 || !["R4", "R2"].includes(rows[0].roleId)) {
+        return { error: { errCode: 7, errMessage: "managerUserId must belong to a clinic manager or doctor" } };
+    }
+
+    return { value: normalizedManagerId };
+};
+
 const prepareClinicPayload = async (data, excludeId = null) => {
     const name = String(data?.name || "").trim();
     const address = String(data?.address || "").trim();
@@ -16,6 +59,10 @@ const prepareClinicPayload = async (data, excludeId = null) => {
     const descriptionMarkdown = data?.descriptionMarkdown || "";
     const slugSource = String(data?.slug || "").trim() || name;
     const slug = normalizeSlug(slugSource);
+    const clinicTypeId = normalizeOptionalString(data?.clinicTypeId);
+    const provinceCode = normalizeOptionalString(data?.provinceCode);
+    const districtCode = normalizeOptionalString(data?.districtCode);
+    const wardCode = normalizeOptionalString(data?.wardCode);
 
     if (!name || !address || !descriptionHTML) {
         return { error: { errCode: 1, errMessage: "Missing required parameters" } };
@@ -37,6 +84,16 @@ const prepareClinicPayload = async (data, excludeId = null) => {
         return { error: { errCode: 4, errMessage: "isActive must be 0 or 1" } };
     }
 
+    const clinicTypeError = validateClinicTypeId(clinicTypeId);
+    if (clinicTypeError) {
+        return { error: clinicTypeError };
+    }
+
+    const managerResult = await normalizeManagerUserId(data?.managerUserId);
+    if (managerResult.error) {
+        return { error: managerResult.error };
+    }
+
     const uniqueSlug = await buildUniqueSlug("clinic", slug, excludeId);
 
     return {
@@ -45,6 +102,11 @@ const prepareClinicPayload = async (data, excludeId = null) => {
             slug: uniqueSlug,
             address,
             image: data?.image,
+            clinicTypeId,
+            managerUserId: managerResult.value,
+            provinceCode,
+            districtCode,
+            wardCode,
             descriptionHTML,
             descriptionMarkdown,
             isActive,
@@ -71,13 +133,19 @@ const createClinic = async (clinicData) => {
 
         await connection.promise().query(
             `INSERT INTO clinic
-             (name, slug, image, address, descriptionHTML, descriptionMarkdown, isActive, displayOrder)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+             (name, slug, image, address, clinicTypeId, managerUserId, provinceCode, districtCode, wardCode,
+              descriptionHTML, descriptionMarkdown, isActive, displayOrder)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
                 payload.name,
                 payload.slug,
                 payload.image,
                 payload.address,
+                payload.clinicTypeId,
+                payload.managerUserId,
+                payload.provinceCode,
+                payload.districtCode,
+                payload.wardCode,
                 payload.descriptionHTML,
                 payload.descriptionMarkdown,
                 payload.isActive,
@@ -159,13 +227,21 @@ const getClinicDetail = async ({ id, slug, location }) => {
         }
 
         if (location && location !== "ALL") {
-            doctorWhere.push(`di.province = ?`);
-            doctorParams.push(location);
+            doctorWhere.push(`(c.provinceCode = ? OR lp.value_vi = ? OR lp.value_en = ?)`);
+            doctorParams.push(location, location, location);
         }
 
         const [doctorRows] = await connection.promise().query(
-            `SELECT di.id, di.doctorId, di.slug, di.province, di.isActive, di.displayOrder
+            `SELECT
+                di.id, di.doctorId, di.slug, di.isActive, di.displayOrder,
+                di.clinicId, c.clinicTypeId, c.address AS clinicAddress,
+                c.provinceCode, c.districtCode, c.wardCode,
+                COALESCE(lp.value_vi, c.provinceCode) AS province
              FROM doctor_info di
+             LEFT JOIN clinic c
+               ON c.id = di.clinicId
+             LEFT JOIN lookup lp
+               ON lp.keyMap = c.provinceCode AND lp.type = 'PROVINCE'
              WHERE ${doctorWhere.join(" AND ")}
              ORDER BY di.displayOrder ASC, di.id ASC`,
             doctorParams
@@ -262,6 +338,11 @@ const editClinic = async (data) => {
             {
                 ...data,
                 image: data?.image === undefined ? existingClinic.image : data.image,
+                clinicTypeId: data?.clinicTypeId === undefined ? existingClinic.clinicTypeId : data.clinicTypeId,
+                managerUserId: data?.managerUserId === undefined ? existingClinic.managerUserId : data.managerUserId,
+                provinceCode: data?.provinceCode === undefined ? existingClinic.provinceCode : data.provinceCode,
+                districtCode: data?.districtCode === undefined ? existingClinic.districtCode : data.districtCode,
+                wardCode: data?.wardCode === undefined ? existingClinic.wardCode : data.wardCode,
                 isActive: data?.isActive === undefined ? existingClinic.isActive : data.isActive,
                 displayOrder: data?.displayOrder === undefined ? existingClinic.displayOrder : data.displayOrder,
             },
@@ -276,12 +357,19 @@ const editClinic = async (data) => {
 
         await connection.promise().query(
             `UPDATE clinic
-             SET name = ?, slug = ?, address = ?, descriptionHTML = ?, descriptionMarkdown = ?, image = ?, isActive = ?, displayOrder = ?
+             SET name = ?, slug = ?, address = ?, clinicTypeId = ?, managerUserId = ?, provinceCode = ?,
+                 districtCode = ?, wardCode = ?, descriptionHTML = ?,
+                 descriptionMarkdown = ?, image = ?, isActive = ?, displayOrder = ?
              WHERE id = ?`,
             [
                 payload.name,
                 payload.slug,
                 payload.address,
+                payload.clinicTypeId,
+                payload.managerUserId,
+                payload.provinceCode,
+                payload.districtCode,
+                payload.wardCode,
                 payload.descriptionHTML,
                 payload.descriptionMarkdown,
                 payload.image,

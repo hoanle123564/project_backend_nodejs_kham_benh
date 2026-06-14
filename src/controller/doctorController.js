@@ -14,6 +14,14 @@ const {
     updateDoctorInfoOrder,
     changeStatusDoctorInfo
 } = require("../service/DoctorService");
+const {
+    FORBIDDEN_RESPONSE,
+    canSaveDoctorInfo,
+    canManageDoctorSchedule,
+    canManageSchedule,
+    canManageBooking,
+    canViewBookingList,
+} = require("../service/clinicAccessService");
 const getTopDoctor = async (req, res) => {
     let limit = req.query.limit;
     if (!limit) {
@@ -57,6 +65,11 @@ const getDetailDoctor = async (req, res) => {
 
 const postInfoDoctor = async (req, res) => {
     try {
+        const allowed = await canSaveDoctorInfo(req.user, req.body?.doctorId, req.body?.clinicId);
+        if (!allowed) {
+            return res.status(403).json(FORBIDDEN_RESPONSE);
+        }
+
         let response = await saveDetailInfoDoctor(req.body);
         return res.status(200).json(response);
     } catch (error) {
@@ -70,6 +83,11 @@ const postInfoDoctor = async (req, res) => {
 
 const CreateScheduleDoctor = async (req, res) => {
     try {
+        const allowed = await canManageDoctorSchedule(req.user, req.body?.doctorId);
+        if (!allowed) {
+            return res.status(403).json(FORBIDDEN_RESPONSE);
+        }
+
         let response = await PostScheduleDoctor(req.body);
         return res.status(200).json(response);
     } catch (error) {
@@ -102,6 +120,11 @@ const GetcheScheduleDoctor = async (req, res) => {
 const getListPatientForDoctor = async (req, res) => {
     try {
         let doctorId = req.query.id;
+        const allowed = await canManageDoctorSchedule(req.user, doctorId);
+        if (!allowed) {
+            return res.status(403).json(FORBIDDEN_RESPONSE);
+        }
+
         let date = req.query.date;
         let response = await GetListPatientForDoctor(doctorId, date);
         return res.status(200).json(response);
@@ -115,7 +138,11 @@ const getListPatientForDoctor = async (req, res) => {
 };
 const postSendRemedy = async (req, res) => {
     try {
-        // Logic for sending remedy goes here
+        const allowed = await canManageBooking(req.user, req.body?.bookingId);
+        if (!allowed) {
+            return res.status(403).json(FORBIDDEN_RESPONSE);
+        }
+
         let response = await sendRemedy(req.body);
         return res.status(200).json(response);
     } catch (error) {
@@ -130,6 +157,11 @@ const postSendRemedy = async (req, res) => {
 const handleDeleteScheduleDoctor = async (req, res) => {
     try {
         let scheduleId = req.body.id;
+        const allowed = await canManageSchedule(req.user, scheduleId);
+        if (!allowed) {
+            return res.status(403).json(FORBIDDEN_RESPONSE);
+        }
+
         let response = await deleteScheduleDoctor(scheduleId);
         return res.status(200).json(response);
     }
@@ -145,6 +177,11 @@ const handleDeleteScheduleDoctor = async (req, res) => {
 const getListAppointmentForDoctor = async (req, res) => {
     try {
         let doctorId = req.query.id;
+        const allowed = await canManageDoctorSchedule(req.user, doctorId);
+        if (!allowed) {
+            return res.status(403).json(FORBIDDEN_RESPONSE);
+        }
+
         let response = await GetListAppointment(doctorId);
         return res.status(200).json(response);
     } catch (error) {
@@ -158,7 +195,11 @@ const getListAppointmentForDoctor = async (req, res) => {
 
 const getListBooking = async (req, res) => {
     try {
-        let response = await ListBooking();
+        if (!canViewBookingList(req.user)) {
+            return res.status(403).json(FORBIDDEN_RESPONSE);
+        }
+
+        let response = await ListBooking(req.user);
         return res.status(200).json(response);
     } catch (error) {
         console.log("getListBooking error", error);

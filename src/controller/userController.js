@@ -102,7 +102,7 @@ const handleDeleteNewUserAPI = async (req, res) => {
 // GET LookUp
 const getLookUp = async (req, res) => {
     try {
-        const response = await getLookUpService(req.query.type);
+        const response = await getLookUpService(req.query.type, req.query.parentKeyMap);
         return res.status(200).json(response);
     } catch (error) {
         console.log("getLookUp error", error);
