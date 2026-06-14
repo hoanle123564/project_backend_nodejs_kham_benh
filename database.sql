@@ -8,13 +8,15 @@ USE kham_benh_db;
 CREATE TABLE IF NOT EXISTS `lookup` (
     `id` INT AUTO_INCREMENT PRIMARY KEY,
     `keyMap` VARCHAR(50) NOT NULL,
-    `type` VARCHAR(50) NOT NULL COMMENT 'GENDER, POSITION, PRICE, PAYMENT, TIME, STATUS, PROVINCE',
+    `type` VARCHAR(50) NOT NULL COMMENT 'GENDER, POSITION, PRICE, PAYMENT, TIME, STATUS, PROVINCE, DISTRICT, WARD, CLINIC_TYPE',
+    `parentKeyMap` VARCHAR(50) DEFAULT NULL COMMENT 'Hierarchical lookup parent: DISTRICT -> PROVINCE, WARD -> DISTRICT',
     `value_vi` VARCHAR(255) DEFAULT NULL,
     `value_en` VARCHAR(255) DEFAULT NULL,
     `createdAt` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     `updatedAt` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     INDEX `idx_keyMap` (`keyMap`),
     INDEX `idx_type` (`type`),
+    INDEX `idx_lookup_type_parent` (`type`, `parentKeyMap`),
     UNIQUE KEY `unique_keyMap_type` (`keyMap`, `type`)
 ) ENGINE=InnoDB;
 
@@ -29,8 +31,11 @@ CREATE TABLE IF NOT EXISTS `users` (
     `firstName` VARCHAR(100) DEFAULT NULL,
     `lastName` VARCHAR(100) DEFAULT NULL,
     `address` VARCHAR(500) DEFAULT NULL,
+    `provinceCode` VARCHAR(50) DEFAULT NULL COMMENT 'Personal address province, lookup.keyMap type=PROVINCE',
+    `districtCode` VARCHAR(50) DEFAULT NULL COMMENT 'Personal address district, lookup.keyMap type=DISTRICT',
+    `wardCode` VARCHAR(50) DEFAULT NULL COMMENT 'Personal address ward, lookup.keyMap type=WARD',
     `gender` VARCHAR(10) DEFAULT NULL COMMENT 'Tham chiếu lookup.keyMap với type=GENDER',
-    `roleId` VARCHAR(10) DEFAULT NULL COMMENT 'R1=Admin, R2=Doctor, R3=Patient',
+    `roleId` VARCHAR(10) DEFAULT NULL COMMENT 'R1=Admin, R2=Doctor, R3=Patient, R4=Clinic Manager',
     `phoneNumber` VARCHAR(20) DEFAULT NULL,
     `positionId` VARCHAR(10) DEFAULT NULL COMMENT 'Tham chiếu lookup.keyMap với type=POSITION',
     `image` LONGTEXT DEFAULT NULL,
@@ -38,7 +43,8 @@ CREATE TABLE IF NOT EXISTS `users` (
     `updatedAt` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     UNIQUE KEY `unique_email` (`email`),
     INDEX `idx_roleId` (`roleId`),
-    INDEX `idx_email` (`email`)
+    INDEX `idx_email` (`email`),
+    INDEX `idx_users_location` (`provinceCode`, `districtCode`, `wardCode`)
 ) ENGINE=InnoDB;
 
 -- =====================================================
@@ -70,6 +76,11 @@ CREATE TABLE IF NOT EXISTS `clinic` (
   `name` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
   `slug` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
   `address` varchar(500) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `clinicTypeId` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'CT1=Clinic, CT2=Hospital',
+  `managerUserId` int DEFAULT NULL COMMENT 'FK to users.id, usually role R4',
+  `provinceCode` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'Clinic work province, lookup.keyMap type=PROVINCE',
+  `districtCode` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'Clinic district, lookup.keyMap type=DISTRICT',
+  `wardCode` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'Clinic ward, lookup.keyMap type=WARD',
   `image` longtext COLLATE utf8mb4_unicode_ci,
   `descriptionHTML` text COLLATE utf8mb4_unicode_ci,
   `descriptionMarkdown` text COLLATE utf8mb4_unicode_ci,
@@ -81,39 +92,45 @@ CREATE TABLE IF NOT EXISTS `clinic` (
   UNIQUE KEY `unique_clinic_slug` (`slug`),
   KEY `idx_name` (`name`),
   KEY `idx_clinic_isActive` (`isActive`),
-  KEY `idx_clinic_displayOrder` (`displayOrder`)
+  KEY `idx_clinic_displayOrder` (`displayOrder`),
+  KEY `idx_clinic_type` (`clinicTypeId`),
+  KEY `idx_clinic_manager` (`managerUserId`),
+  KEY `idx_clinic_location` (`provinceCode`, `districtCode`, `wardCode`),
+  CONSTRAINT `fk_clinic_manager` FOREIGN KEY (`managerUserId`) REFERENCES `users` (`id`) ON DELETE SET NULL ON UPDATE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS `clinic_department` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `clinicId` int NOT NULL,
+  `specialtyId` int NOT NULL,
+  `description` text COLLATE utf8mb4_unicode_ci,
+  `isActive` tinyint(1) DEFAULT '1',
+  `createdAt` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updatedAt` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `unique_clinic_department_specialty` (`clinicId`, `specialtyId`),
+  KEY `idx_clinic_department_clinic` (`clinicId`),
+  KEY `idx_clinic_department_specialty` (`specialtyId`),
+  KEY `idx_clinic_department_active` (`isActive`),
+  CONSTRAINT `fk_clinic_department_clinic` FOREIGN KEY (`clinicId`) REFERENCES `clinic` (`id`) ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT `fk_clinic_department_specialty` FOREIGN KEY (`specialtyId`) REFERENCES `specialty` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE
 ) ENGINE=InnoDB;
 
 -- =====================================================
--- BẢNG 5: DOCTOR (Thông tin markdown bác sĩ)
--- =====================================================
-CREATE TABLE IF NOT EXISTS `doctor` (
-    `id` INT AUTO_INCREMENT PRIMARY KEY,
-    `doctorId` INT NOT NULL ,
-    `contentHTML` TEXT DEFAULT NULL,
-    `contentMarkdown` TEXT DEFAULT NULL,
-    `description` TEXT DEFAULT NULL,
-    `createdAt` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    `updatedAt` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    UNIQUE KEY `unique_doctorId` (`doctorId`),
-    INDEX `idx_doctorId` (`doctorId`),
-    CONSTRAINT `fk_doctor_user` FOREIGN KEY (`doctorId`) 
-        REFERENCES `users`(`id`) ON DELETE CASCADE ON UPDATE CASCADE
-) ENGINE=InnoDB;
-
--- =====================================================
--- BẢNG 6: DOCTOR_INFO (Thông tin chi tiết bác sĩ)
+-- BẢNG 5: DOCTOR_INFO (Thông tin chi tiết bác sĩ)
 -- Bao gồm: giá, phương thức thanh toán, chuyên khoa, phòng khám
 -- =====================================================
 CREATE TABLE IF NOT EXISTS `doctor_info` (
   `id` int NOT NULL AUTO_INCREMENT,
   `doctorId` int NOT NULL,
+  `contentHTML` TEXT DEFAULT NULL,
+  `contentMarkdown` TEXT DEFAULT NULL,
+  `description` TEXT DEFAULT NULL,
   `slug` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `isActive` int DEFAULT '1',
   `displayOrder` int DEFAULT '0',
   `priceId` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'Tham chiếu lookup.keyMap với type=PRICE',
   `paymentId` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'Tham chiếu lookup.keyMap với type=PAYMENT',
-  `province` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'Tham chiếu lookup.keyMap với type=PROVINCE',
   `specialtyId` int DEFAULT NULL COMMENT 'FK to specialty.id',
   `clinicId` int DEFAULT NULL COMMENT 'FK to clinic.id',
   `createdAt` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
@@ -130,7 +147,7 @@ CREATE TABLE IF NOT EXISTS `doctor_info` (
 ) ENGINE=InnoDB;
 
 -- =====================================================
--- BẢNG 7: SCHEDULE (Lịch làm việc bác sĩ)
+-- BẢNG 6: SCHEDULE (Lịch làm việc bác sĩ)
 -- =====================================================
 CREATE TABLE IF NOT EXISTS `schedule` (
   `id` int NOT NULL AUTO_INCREMENT,
@@ -156,11 +173,12 @@ CREATE TABLE IF NOT EXISTS `booking` (
   `id` int NOT NULL AUTO_INCREMENT,
   `statusId` varchar(10) COLLATE utf8mb4_unicode_ci DEFAULT 'S1' COMMENT 'S1=Chờ xác nhận, S2=Đã xác nhận, S3=Đã khám, S4=Đã hủy',
   `patientId` int NOT NULL COMMENT 'FK to users.id (Patient)',
-  `scheduleId` int DEFAULT NULL,
+  `scheduleId` int NOT NULL,
   `date` date NOT NULL,
   `reason` text COLLATE utf8mb4_unicode_ci COMMENT 'Lý do khám',
   `token` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'Token xác nhận email',
   `priceAtBooking` int DEFAULT '0',
+  `paymentMethodId` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'Phương thức thanh toán bệnh nhân chọn lúc đặt lịch',
   `createdAt` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
   `updatedAt` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
@@ -169,14 +187,173 @@ CREATE TABLE IF NOT EXISTS `booking` (
   KEY `idx_statusId` (`statusId`),
   KEY `idx_token` (`token`),
   KEY `idx_doctor_patient_date_time` (`patientId`,`date`),
+  KEY `idx_booking_payment_method` (`paymentMethodId`),
   KEY `fk_booking_schedule` (`scheduleId`),
   CONSTRAINT `fk_booking_patient` FOREIGN KEY (`patientId`) REFERENCES `users` (`id`) ON DELETE CASCADE ON UPDATE CASCADE,
   CONSTRAINT `fk_booking_schedule` FOREIGN KEY (`scheduleId`) REFERENCES `schedule` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE
 ) ENGINE=InnoDB;
 
+-- =====================================================
+-- BẢNG 9: EXAMINATION_VISIT (Lượt khám trong ngày)
+-- Quản lý STT khám theo từng bác sĩ/ngày, trạng thái khám và thanh toán
+-- =====================================================
+CREATE TABLE IF NOT EXISTS `examination_visit` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `bookingId` int NOT NULL,
+  `patientId` int NOT NULL,
+  `doctorId` int NOT NULL,
+  `examDate` date NOT NULL,
+  `queueNumber` int NOT NULL COMMENT 'STT khám theo từng bác sĩ trong ngày',
+  `statusId` varchar(10) COLLATE utf8mb4_unicode_ci DEFAULT 'VS1' COMMENT 'VS1=Chờ khám, VS2=Đang khám, VS3=Đã khám xong',
+  `paymentStatusId` varchar(10) COLLATE utf8mb4_unicode_ci DEFAULT 'PS1' COMMENT 'PS1=Chưa thanh toán, PS2=Đã thanh toán',
+  `paidAmount` int DEFAULT '0',
+  `paymentMethodId` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'Tham chiếu lookup.keyMap với type=PAYMENT',
+  `paidAt` timestamp NULL DEFAULT NULL,
+  `startedAt` timestamp NULL DEFAULT NULL,
+  `completedAt` timestamp NULL DEFAULT NULL,
+  `note` text COLLATE utf8mb4_unicode_ci,
+  `createdAt` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updatedAt` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `unique_examination_visit_booking` (`bookingId`),
+  UNIQUE KEY `unique_doctor_exam_queue` (`doctorId`,`examDate`,`queueNumber`),
+  KEY `idx_examination_visit_patient` (`patientId`),
+  KEY `idx_examination_visit_doctor_date` (`doctorId`,`examDate`),
+  KEY `idx_examination_visit_status` (`statusId`),
+  KEY `idx_examination_visit_payment` (`paymentStatusId`),
+  CONSTRAINT `fk_examination_visit_booking` FOREIGN KEY (`bookingId`) REFERENCES `booking` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE,
+  CONSTRAINT `fk_examination_visit_patient` FOREIGN KEY (`patientId`) REFERENCES `users` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE,
+  CONSTRAINT `fk_examination_visit_doctor` FOREIGN KEY (`doctorId`) REFERENCES `users` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE
+) ENGINE=InnoDB;
 
-DROP TABLE IF EXISTS `post`;
-CREATE TABLE `post` (
+-- =====================================================
+-- BẢNG 10: PATIENT_PROFILE (Hồ sơ nền của bệnh nhân)
+-- =====================================================
+CREATE TABLE IF NOT EXISTS `patient_profile` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `patientId` int NOT NULL,
+  `medicalCode` varchar(50) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `dateOfBirth` date DEFAULT NULL,
+  `bloodType` varchar(10) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `heightCm` decimal(5,2) DEFAULT NULL,
+  `weightKg` decimal(5,2) DEFAULT NULL,
+  `allergies` text COLLATE utf8mb4_unicode_ci,
+  `citizenId` varchar(20) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `ethnicityId` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'Logical reference to lookup.keyMap with type=ETHNICITY',
+  `occupation` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `healthInsuranceCode` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `createdAt` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updatedAt` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `unique_patient_profile_patient` (`patientId`),
+  UNIQUE KEY `unique_patient_profile_code` (`medicalCode`),
+  KEY `idx_patient_profile_patient` (`patientId`),
+  KEY `idx_patient_profile_citizen` (`citizenId`),
+  KEY `idx_patient_profile_ethnicity` (`ethnicityId`),
+  CONSTRAINT `fk_patient_profile_patient` FOREIGN KEY (`patientId`) REFERENCES `users` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE
+) ENGINE=InnoDB;
+
+-- =====================================================
+-- BẢNG 11: MEDICAL_RECORD (Bệnh án theo từng lần khám)
+-- =====================================================
+CREATE TABLE IF NOT EXISTS `medical_record` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `bookingId` int NOT NULL,
+  `examinationVisitId` int NOT NULL,
+  `patientId` int NOT NULL,
+  `doctorId` int NOT NULL,
+  `chiefComplaint` text COLLATE utf8mb4_unicode_ci,
+  `symptoms` text COLLATE utf8mb4_unicode_ci,
+  `clinicalSigns` text COLLATE utf8mb4_unicode_ci,
+  `preliminaryDiagnosis` text COLLATE utf8mb4_unicode_ci,
+  `finalDiagnosis` text COLLATE utf8mb4_unicode_ci,
+  `treatmentPlan` text COLLATE utf8mb4_unicode_ci,
+  `doctorConclusion` text COLLATE utf8mb4_unicode_ci,
+  `generalNote` text COLLATE utf8mb4_unicode_ci,
+  `followUpDate` date DEFAULT NULL,
+  `followUpNote` text COLLATE utf8mb4_unicode_ci,
+  `statusId` varchar(10) COLLATE utf8mb4_unicode_ci DEFAULT 'MR1' COMMENT 'MR1=Bản nháp, MR2=Hoàn thành',
+  `createdAt` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updatedAt` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `unique_medical_record_booking` (`bookingId`),
+  UNIQUE KEY `unique_medical_record_visit` (`examinationVisitId`),
+  KEY `idx_medical_record_patient` (`patientId`),
+  KEY `idx_medical_record_doctor` (`doctorId`),
+  KEY `idx_medical_record_status` (`statusId`),
+  KEY `idx_medical_record_follow_up` (`followUpDate`),
+  CONSTRAINT `fk_medical_record_booking` FOREIGN KEY (`bookingId`) REFERENCES `booking` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE,
+  CONSTRAINT `fk_medical_record_visit` FOREIGN KEY (`examinationVisitId`) REFERENCES `examination_visit` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE,
+  CONSTRAINT `fk_medical_record_patient` FOREIGN KEY (`patientId`) REFERENCES `users` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE,
+  CONSTRAINT `fk_medical_record_doctor` FOREIGN KEY (`doctorId`) REFERENCES `users` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE
+) ENGINE=InnoDB;
+
+-- =====================================================
+-- BẢNG 12: PARACLINICAL_RESULT (Cận lâm sàng)
+-- Lưu xét nghiệm, chẩn đoán hình ảnh hoặc kết quả cận lâm sàng khác theo bệnh án
+-- =====================================================
+CREATE TABLE IF NOT EXISTS `paraclinical_result` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `medicalRecordId` int NOT NULL,
+  `type` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'XET_NGHIEM, CHAN_DOAN_HINH_ANH, KHAC',
+  `name` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `resultSummary` text COLLATE utf8mb4_unicode_ci,
+  `note` text COLLATE utf8mb4_unicode_ci,
+  `createdAt` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updatedAt` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_paraclinical_record` (`medicalRecordId`),
+  CONSTRAINT `fk_paraclinical_record` FOREIGN KEY (`medicalRecordId`) REFERENCES `medical_record` (`id`) ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB;
+
+-- =====================================================
+-- BẢNG 13: PRESCRIPTION (Đơn thuốc)
+-- =====================================================
+CREATE TABLE IF NOT EXISTS `prescription` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `medicalRecordId` int NOT NULL,
+  `patientId` int NOT NULL,
+  `doctorId` int NOT NULL,
+  `prescriptionCode` varchar(50) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `note` text COLLATE utf8mb4_unicode_ci,
+  `createdAt` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updatedAt` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `unique_prescription_record` (`medicalRecordId`),
+  UNIQUE KEY `unique_prescription_code` (`prescriptionCode`),
+  KEY `idx_prescription_patient` (`patientId`),
+  KEY `idx_prescription_doctor` (`doctorId`),
+  CONSTRAINT `fk_prescription_record` FOREIGN KEY (`medicalRecordId`) REFERENCES `medical_record` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE,
+  CONSTRAINT `fk_prescription_patient` FOREIGN KEY (`patientId`) REFERENCES `users` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE,
+  CONSTRAINT `fk_prescription_doctor` FOREIGN KEY (`doctorId`) REFERENCES `users` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE
+) ENGINE=InnoDB;
+
+-- =====================================================
+-- BẢNG 14: PRESCRIPTION_ITEM (Chi tiết thuốc)
+-- =====================================================
+CREATE TABLE IF NOT EXISTS `prescription_item` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `prescriptionId` int NOT NULL,
+  `medicineName` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `dosageForm` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `strength` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `unit` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `usageDays` int DEFAULT '1',
+  `morningQty` decimal(5,2) DEFAULT '0.00',
+  `noonQty` decimal(5,2) DEFAULT '0.00',
+  `afternoonQty` decimal(5,2) DEFAULT '0.00',
+  `eveningQty` decimal(5,2) DEFAULT '0.00',
+  `totalQuantity` decimal(10,2) DEFAULT '0.00',
+  `instruction` text COLLATE utf8mb4_unicode_ci,
+  `note` text COLLATE utf8mb4_unicode_ci,
+  `createdAt` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updatedAt` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_prescription_item_prescription` (`prescriptionId`),
+  CONSTRAINT `fk_prescription_item_prescription` FOREIGN KEY (`prescriptionId`) REFERENCES `prescription` (`id`) ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS `post` (
   `id` int NOT NULL AUTO_INCREMENT,
   `title` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL COMMENT 'Tiêu đề bài viết',
   `shortDescription` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci COMMENT 'Mô tả ngắn nội dung bài viết',
@@ -204,8 +381,7 @@ CREATE TABLE `post` (
 -- Table structure for table `post_category`
 --
 
-DROP TABLE IF EXISTS `post_category`;
-CREATE TABLE `post_category` (
+CREATE TABLE IF NOT EXISTS `post_category` (
   `id` int NOT NULL AUTO_INCREMENT,
   `name` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL COMMENT 'Tên danh mục bài viết',
   `slug` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL COMMENT 'Slug danh mục bài viết',
@@ -225,8 +401,7 @@ CREATE TABLE `post_category` (
 -- Table structure for table `post_category_detail`
 --
 
-DROP TABLE IF EXISTS `post_category_detail`;
-CREATE TABLE `post_category_detail` (
+CREATE TABLE IF NOT EXISTS `post_category_detail` (
   `postId` int NOT NULL,
   `postCategoryId` int NOT NULL,
   `createdAt` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
@@ -241,7 +416,7 @@ CREATE TABLE `post_category_detail` (
 -- =====================================================
 
 -- GENDER (Giới tính)
-INSERT INTO `lookup` (`keyMap`, `type`, `value_vi`, `value_en`) VALUES 
+INSERT IGNORE INTO `lookup` (`keyMap`, `type`, `value_vi`, `value_en`) VALUES
 ('M', 'GENDER', 'Nam', 'Male'),
 ('F', 'GENDER', 'Nữ', 'Female'),
 ('O', 'GENDER', 'Khác', 'Other');
@@ -249,13 +424,14 @@ INSERT INTO `lookup` (`keyMap`, `type`, `value_vi`, `value_en`) VALUES
 
 -- ROLE (Vai trò) - Không dùng trực tiếp trong lookup nhưng để tham khảo
 -- R1 = Admin, R2 = Doctor, R3 = Patient
-INSERT INTO `lookup` (`keyMap`, `type`, `value_vi`, `value_en`) VALUES 
+INSERT IGNORE INTO `lookup` (`keyMap`, `type`, `value_vi`, `value_en`) VALUES
 ('R1', 'ROLE', 'Quản trị viên', 'Admin'),
 ('R2', 'ROLE', 'Bác sĩ', 'Doctor'),
-('R3', 'ROLE', 'Bệnh nhân', 'Patient');
+('R3', 'ROLE', 'Bệnh nhân', 'Patient'),
+('R4', 'ROLE', 'Quản lý cơ sở', 'Clinic Manager');
 
 -- POSITION (Chức vụ bác sĩ)
-INSERT INTO `lookup` (`keyMap`, `type`, `value_vi`, `value_en`) VALUES 
+INSERT IGNORE INTO `lookup` (`keyMap`, `type`, `value_vi`, `value_en`) VALUES
 ('P0', 'POSITION', 'Bác sĩ', 'Doctor'),
 ('P1', 'POSITION', 'Thạc sĩ', 'Master'),
 ('P2', 'POSITION', 'Tiến sĩ', 'Doctor of Philosophy'),
@@ -263,21 +439,41 @@ INSERT INTO `lookup` (`keyMap`, `type`, `value_vi`, `value_en`) VALUES
 ('P4', 'POSITION', 'Giáo sư', 'Professor');
 
 -- PRICE (Giá khám)
-INSERT INTO `lookup` (`keyMap`, `type`, `value_vi`, `value_en`) VALUES 
-('PRI1', 'PRICE', '100.000 VNĐ', '5 USD'),
-('PRI2', 'PRICE', '200.000 VNĐ', '10 USD'),
-('PRI3', 'PRICE', '300.000 VNĐ', '15 USD'),
-('PRI4', 'PRICE', '400.000 VNĐ', '20 USD'),
-('PRI5', 'PRICE', '500.000 VNĐ', '25 USD');
+INSERT IGNORE INTO `lookup` (`keyMap`, `type`, `value_vi`, `value_en`) VALUES
+('PRI1', 'PRICE', '50000', '2.5'),
+('PRI2', 'PRICE', '100000', '5'),
+('PRI3', 'PRICE', '150000', '7.5'),
+('PRI4', 'PRICE', '200000', '10'),
+('PRI5', 'PRICE', '250000', '12.5'),
+('PRI6', 'PRICE', '300000', '15'),
+('PRI7', 'PRICE', '350000', '17.5'),
+('PRI8', 'PRICE', '400000', '20'),
+('PRI9', 'PRICE', '450000', '22.5'),
+('PRI10', 'PRICE', '500000', '25'),
+('PRI11', 'PRICE', '550000', '27.5'),
+('PRI12', 'PRICE', '600000', '30'),
+('PRI13', 'PRICE', '650000', '32.5'),
+('PRI14', 'PRICE', '700000', '35'),
+('PRI15', 'PRICE', '750000', '37.5'),
+('PRI16', 'PRICE', '800000', '40'),
+('PRI17', 'PRICE', '850000', '42.5'),
+('PRI18', 'PRICE', '900000', '45'),
+('PRI19', 'PRICE', '950000', '47.5'),
+('PRI20', 'PRICE', '1000000', '50');
 
 -- PAYMENT (Phương thức thanh toán)
-INSERT INTO `lookup` (`keyMap`, `type`, `value_vi`, `value_en`) VALUES 
+INSERT IGNORE INTO `lookup` (`keyMap`, `type`, `value_vi`, `value_en`) VALUES
 ('PAY1', 'PAYMENT', 'Tiền mặt', 'Cash'),
 ('PAY2', 'PAYMENT', 'Chuyển khoản', 'Bank Transfer'),
 ('PAY3', 'PAYMENT', 'Thẻ tín dụng', 'Credit Card');
 
+-- CLINIC_TYPE (Loại cơ sở khám)
+INSERT IGNORE INTO `lookup` (`keyMap`, `type`, `value_vi`, `value_en`) VALUES
+('CT1', 'CLINIC_TYPE', 'Phòng khám', 'Clinic'),
+('CT2', 'CLINIC_TYPE', 'Bệnh viện', 'Hospital');
+
 -- Thời gian khám
-INSERT INTO `lookup` (`keyMap`, `type`, `value_vi`, `value_en`) VALUES 
+INSERT IGNORE INTO `lookup` (`keyMap`, `type`, `value_vi`, `value_en`) VALUES
 -- Sáng
 ('T1', 'TIME', '08:00 - 08:30', '8:00 AM - 8:30 AM'),
 ('T2', 'TIME', '08:30 - 09:00', '8:30 AM - 9:00 AM'),
@@ -302,14 +498,30 @@ INSERT INTO `lookup` (`keyMap`, `type`, `value_vi`, `value_en`) VALUES
 ('T20', 'TIME', '17:30 - 18:00', '5:30 PM - 6:00 PM');
 
 -- STATUS (Trạng thái đặt lịch)
-INSERT INTO `lookup` (`keyMap`, `type`, `value_vi`, `value_en`) VALUES 
+INSERT IGNORE INTO `lookup` (`keyMap`, `type`, `value_vi`, `value_en`) VALUES
 ('S1', 'STATUS', 'Chờ xác nhận', 'Pending'),
 ('S2', 'STATUS', 'Đã xác nhận', 'Confirmed'),
 ('S3', 'STATUS', 'Đã khám xong', 'Completed'),
 ('S4', 'STATUS', 'Đã hủy', 'Cancelled');
 
+-- VISIT_STATUS (Trạng thái lượt khám)
+INSERT IGNORE INTO `lookup` (`keyMap`, `type`, `value_vi`, `value_en`) VALUES
+('VS1', 'VISIT_STATUS', 'Chờ khám', 'Waiting'),
+('VS2', 'VISIT_STATUS', 'Đang khám', 'In progress'),
+('VS3', 'VISIT_STATUS', 'Đã khám xong', 'Completed');
+
+-- PAYMENT_STATUS (Trạng thái thanh toán)
+INSERT IGNORE INTO `lookup` (`keyMap`, `type`, `value_vi`, `value_en`) VALUES
+('PS1', 'PAYMENT_STATUS', 'Chưa thanh toán', 'Unpaid'),
+('PS2', 'PAYMENT_STATUS', 'Đã thanh toán', 'Paid');
+
+-- MEDICAL_RECORD_STATUS (Trạng thái bệnh án)
+INSERT IGNORE INTO `lookup` (`keyMap`, `type`, `value_vi`, `value_en`) VALUES
+('MR1', 'MEDICAL_RECORD_STATUS', 'Bản nháp', 'Draft'),
+('MR2', 'MEDICAL_RECORD_STATUS', 'Hoàn thành', 'Completed');
+
 -- PROVINCE (Tỉnh thành)
-INSERT INTO `lookup` (`keyMap`, `type`, `value_vi`, `value_en`) VALUES 
+INSERT IGNORE INTO `lookup` (`keyMap`, `type`, `value_vi`, `value_en`) VALUES
 ('PRO1', 'PROVINCE', 'Hà Nội', 'Hanoi'),
 ('PRO2', 'PROVINCE', 'Hồ Chí Minh', 'Ho Chi Minh'),
 ('PRO3', 'PROVINCE', 'Đà Nẵng', 'Da Nang'),
@@ -318,5 +530,5 @@ INSERT INTO `lookup` (`keyMap`, `type`, `value_vi`, `value_en`) VALUES
 
 -- TÀI KHOẢN ADMIN
 -- Mật khẩu: 123456
-INSERT INTO `users` (`email`, `password`, `firstName`, `lastName`, `roleId`, `gender`) VALUES 
+INSERT IGNORE INTO `users` (`email`, `password`, `firstName`, `lastName`, `roleId`, `gender`) VALUES
 ('admin@gmail.com', '$2b$10$abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWX', 'Admin', 'System', 'R1', 'M');
