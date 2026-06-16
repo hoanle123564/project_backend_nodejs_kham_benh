@@ -520,14 +520,6 @@ INSERT IGNORE INTO `lookup` (`keyMap`, `type`, `value_vi`, `value_en`) VALUES
 ('MR1', 'MEDICAL_RECORD_STATUS', 'Bản nháp', 'Draft'),
 ('MR2', 'MEDICAL_RECORD_STATUS', 'Hoàn thành', 'Completed');
 
--- PROVINCE (Tỉnh thành)
-INSERT IGNORE INTO `lookup` (`keyMap`, `type`, `value_vi`, `value_en`) VALUES
-('PRO1', 'PROVINCE', 'Hà Nội', 'Hanoi'),
-('PRO2', 'PROVINCE', 'Hồ Chí Minh', 'Ho Chi Minh'),
-('PRO3', 'PROVINCE', 'Đà Nẵng', 'Da Nang'),
-('PRO4', 'PROVINCE', 'Hải Phòng', 'Hai Phong'),
-('PRO5', 'PROVINCE', 'Cần Thơ', 'Can Tho');
-
 -- TÀI KHOẢN ADMIN
 -- Mật khẩu: 123456
 INSERT IGNORE INTO `users` (`email`, `password`, `firstName`, `lastName`, `roleId`, `gender`) VALUES

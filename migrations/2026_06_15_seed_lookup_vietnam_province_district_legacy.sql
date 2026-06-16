@@ -1,21 +1,6 @@
 -- Vietnam province/district/ward lookup seed (legacy 3-level administrative model for app compatibility)
 -- Generated on 2026-06-15 from https://provinces.open-api.vn/api/v1/?depth=3
 -- Scope: PROVINCE, DISTRICT, and WARD.
-SET NAMES utf8mb4;
-START TRANSACTION;
-
--- Remap legacy demo province codes shipped in database.sql to official province codes
--- UPDATE `users` SET `provinceCode` = '01' WHERE `provinceCode` = 'PRO1';
--- UPDATE `clinic` SET `provinceCode` = '01' WHERE `provinceCode` = 'PRO1';
--- UPDATE `users` SET `provinceCode` = '79' WHERE `provinceCode` = 'PRO2';
--- UPDATE `clinic` SET `provinceCode` = '79' WHERE `provinceCode` = 'PRO2';
--- UPDATE `users` SET `provinceCode` = '48' WHERE `provinceCode` = 'PRO3';
--- UPDATE `clinic` SET `provinceCode` = '48' WHERE `provinceCode` = 'PRO3';
--- UPDATE `users` SET `provinceCode` = '31' WHERE `provinceCode` = 'PRO4';
--- UPDATE `clinic` SET `provinceCode` = '31' WHERE `provinceCode` = 'PRO4';
--- UPDATE `users` SET `provinceCode` = '92' WHERE `provinceCode` = 'PRO5';
--- UPDATE `clinic` SET `provinceCode` = '92' WHERE `provinceCode` = 'PRO5';
--- DELETE FROM `lookup` WHERE `type` = 'PROVINCE' AND `keyMap` IN ('PRO1', 'PRO2', 'PRO3', 'PRO4', 'PRO5');
 
 -- PROVINCE lookup block
 INSERT INTO `lookup` (`keyMap`, `type`, `parentKeyMap`, `value_vi`, `value_en`) VALUES
@@ -16866,5 +16851,3 @@ ON DUPLICATE KEY UPDATE
   `value_vi` = VALUES(`value_vi`),
   `value_en` = VALUES(`value_en`),
   `updatedAt` = CURRENT_TIMESTAMP;
-
-COMMIT;
