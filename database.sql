@@ -194,6 +194,41 @@ CREATE TABLE IF NOT EXISTS `booking` (
 ) ENGINE=InnoDB;
 
 -- =====================================================
+-- BANG 8A: BOOKING_QUEUE_SEQUENCE (Bo dem STT theo bac si/ngay)
+-- Dung cho transaction cap STT booking bang row lock o cac phase runtime sau.
+-- =====================================================
+CREATE TABLE IF NOT EXISTS `booking_queue_sequence` (
+  `doctorId` int NOT NULL,
+  `appointmentDate` date NOT NULL,
+  `currentNumber` int NOT NULL DEFAULT '0',
+  `createdAt` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updatedAt` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`doctorId`,`appointmentDate`),
+  CONSTRAINT `fk_booking_queue_sequence_doctor` FOREIGN KEY (`doctorId`) REFERENCES `users` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE
+) ENGINE=InnoDB;
+
+-- =====================================================
+-- BANG 8B: BOOKING_QUEUE (STT kham duoc cap tai thoi diem booking)
+-- Luu STT rieng voi booking vi booking giu scheduleId lam quan he loi va khong co doctorId truc tiep.
+-- =====================================================
+CREATE TABLE IF NOT EXISTS `booking_queue` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `bookingId` int NOT NULL,
+  `doctorId` int NOT NULL,
+  `appointmentDate` date NOT NULL,
+  `queueNumber` int NOT NULL,
+  `createdAt` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updatedAt` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `unique_booking_queue_booking` (`bookingId`),
+  UNIQUE KEY `unique_booking_queue_scope` (`doctorId`,`appointmentDate`,`queueNumber`),
+  KEY `idx_booking_queue_doctor_date` (`doctorId`,`appointmentDate`),
+  KEY `idx_booking_queue_number` (`queueNumber`),
+  CONSTRAINT `fk_booking_queue_booking` FOREIGN KEY (`bookingId`) REFERENCES `booking` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE,
+  CONSTRAINT `fk_booking_queue_doctor` FOREIGN KEY (`doctorId`) REFERENCES `users` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE
+) ENGINE=InnoDB;
+
+-- =====================================================
 -- BẢNG 9: EXAMINATION_VISIT (Lượt khám trong ngày)
 -- Quản lý STT khám theo từng bác sĩ/ngày, trạng thái khám và thanh toán
 -- =====================================================
@@ -262,6 +297,13 @@ CREATE TABLE IF NOT EXISTS `medical_record` (
   `examinationVisitId` int NOT NULL,
   `patientId` int NOT NULL,
   `doctorId` int NOT NULL,
+  `patientSnapshotName` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `patientSnapshotDateOfBirth` date DEFAULT NULL,
+  `patientSnapshotGender` varchar(10) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `patientSnapshotPhoneNumber` varchar(20) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `patientSnapshotAddress` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `patientSnapshotCitizenId` varchar(20) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `patientSnapshotHealthInsuranceCode` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `chiefComplaint` text COLLATE utf8mb4_unicode_ci,
   `symptoms` text COLLATE utf8mb4_unicode_ci,
   `clinicalSigns` text COLLATE utf8mb4_unicode_ci,
@@ -272,7 +314,9 @@ CREATE TABLE IF NOT EXISTS `medical_record` (
   `generalNote` text COLLATE utf8mb4_unicode_ci,
   `followUpDate` date DEFAULT NULL,
   `followUpNote` text COLLATE utf8mb4_unicode_ci,
-  `statusId` varchar(10) COLLATE utf8mb4_unicode_ci DEFAULT 'MR1' COMMENT 'MR1=Bản nháp, MR2=Hoàn thành',
+  `statusId` varchar(10) COLLATE utf8mb4_unicode_ci DEFAULT 'MR1' COMMENT 'MR1=Open draft, MR2=Closed record',
+  `closedAt` timestamp NULL DEFAULT NULL,
+  `closedBy` int DEFAULT NULL,
   `createdAt` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
   `updatedAt` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
@@ -281,11 +325,13 @@ CREATE TABLE IF NOT EXISTS `medical_record` (
   KEY `idx_medical_record_patient` (`patientId`),
   KEY `idx_medical_record_doctor` (`doctorId`),
   KEY `idx_medical_record_status` (`statusId`),
+  KEY `idx_medical_record_closed_by` (`closedBy`),
   KEY `idx_medical_record_follow_up` (`followUpDate`),
   CONSTRAINT `fk_medical_record_booking` FOREIGN KEY (`bookingId`) REFERENCES `booking` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE,
   CONSTRAINT `fk_medical_record_visit` FOREIGN KEY (`examinationVisitId`) REFERENCES `examination_visit` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE,
   CONSTRAINT `fk_medical_record_patient` FOREIGN KEY (`patientId`) REFERENCES `users` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE,
-  CONSTRAINT `fk_medical_record_doctor` FOREIGN KEY (`doctorId`) REFERENCES `users` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE
+  CONSTRAINT `fk_medical_record_doctor` FOREIGN KEY (`doctorId`) REFERENCES `users` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE,
+  CONSTRAINT `fk_medical_record_closed_by` FOREIGN KEY (`closedBy`) REFERENCES `users` (`id`) ON DELETE SET NULL ON UPDATE CASCADE
 ) ENGINE=InnoDB;
 
 -- =====================================================
