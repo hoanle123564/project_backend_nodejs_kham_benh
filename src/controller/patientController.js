@@ -1,4 +1,11 @@
 const { bookAppointment, verifyBookAppointment, AllPatient, ListBookingForPatient, cancelBookAppointment } = require("../service/PatientService");
+const { getPatientProfile, updatePatientProfile } = require("../service/patientProfileService");
+const {
+    FORBIDDEN_RESPONSE,
+    isPatientOwnerOfBooking,
+} = require("../service/clinicAccessService");
+
+const isPatientUser = (user) => user?.roleId === "R3";
 
 const postBookAppointment = async (req, res) => {
     try {
@@ -40,7 +47,11 @@ const getAllPatient = async (req, res) => {
 
 const getListBookingForPatient = async (req, res) => {
     try {
-        let patientId = req.query.id// Assuming authMiddleware sets req.user
+        if (!isPatientUser(req.user)) {
+            return res.status(403).json(FORBIDDEN_RESPONSE);
+        }
+
+        let patientId = req.user.id;
         let respone = await ListBookingForPatient(patientId);
         return res.status(200).json(respone);
     } catch (error) {
@@ -53,7 +64,20 @@ const getListBookingForPatient = async (req, res) => {
 };
 const postCancelBookAppointment = async (req, res) => {
     try {
-        let respone = await cancelBookAppointment(req.body);
+        if (!isPatientUser(req.user)) {
+            return res.status(403).json(FORBIDDEN_RESPONSE);
+        }
+
+        const bookingId = req.body?.BookingId || req.body?.bookingId;
+        const allowed = await isPatientOwnerOfBooking(req.user, bookingId);
+        if (!allowed) {
+            return res.status(403).json(FORBIDDEN_RESPONSE);
+        }
+
+        let respone = await cancelBookAppointment({
+            ...req.body,
+            BookingId: bookingId,
+        });
         return res.status(200).json(respone);
 
     } catch (error) {
@@ -64,10 +88,46 @@ const postCancelBookAppointment = async (req, res) => {
         });
     }
 };
+const getPatientProfileAPI = async (req, res) => {
+    try {
+        if (!isPatientUser(req.user)) {
+            return res.status(403).json(FORBIDDEN_RESPONSE);
+        }
+
+        const response = await getPatientProfile(req.user.id);
+        return res.status(200).json(response);
+    } catch (error) {
+        console.log("getPatientProfileAPI error", error);
+        return res.status(400).json({
+            errCode: -1,
+            errMessage: "Error from server",
+        });
+    }
+};
+
+const updatePatientProfileAPI = async (req, res) => {
+    try {
+        if (!isPatientUser(req.user)) {
+            return res.status(403).json(FORBIDDEN_RESPONSE);
+        }
+
+        const response = await updatePatientProfile(req.user.id, req.body);
+        return res.status(200).json(response);
+    } catch (error) {
+        console.log("updatePatientProfileAPI error", error);
+        return res.status(400).json({
+            errCode: -1,
+            errMessage: "Error from server",
+        });
+    }
+};
+
 module.exports = {
     postBookAppointment,
     postVerifyBookAppointment,
     getAllPatient,
     getListBookingForPatient,
-    postCancelBookAppointment
+    postCancelBookAppointment,
+    getPatientProfileAPI,
+    updatePatientProfileAPI,
 };

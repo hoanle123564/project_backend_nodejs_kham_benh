@@ -1,6 +1,16 @@
 const connection = require("../config/data");
 const bcrypt = require("bcrypt");
 const { createToken } = require("../jwtService");
+const { withTransaction } = require("./transactionService");
+const { ensurePatientProfileRow } = require("./patientProfileService");
+
+const PATIENT_ROLE_ID = "R3";
+
+const ensurePatientProfileForRole = async (userId, roleId, db) => {
+    if (roleId === PATIENT_ROLE_ID) {
+        await ensurePatientProfileRow(userId, db);
+    }
+};
 
 
 // LOGIN SERVICE
@@ -158,19 +168,23 @@ const createNewUserService = async (data) => {
                 // Cập nhật thông tin cho khách vãng lai
                 const hashedPass = await bcrypt.hash(password, 10);
 
-                await connection.promise().query(
-                    `UPDATE users 
-                     SET password = ?, firstName = ?, lastName = ?, address = ?, 
-                         gender = ?, roleId = ?, phoneNumber = ?, positionId = ?, image = ?
-                     WHERE id = ?`,
-                    [
-                        hashedPass, firstName, lastName,
-                        address || null, gender || null,
-                        roleId || null, phoneNumber || null,
-                        positionId || null, image || null,
-                        existingUser.id
-                    ]
-                );
+                await withTransaction(async (db) => {
+                    await db.query(
+                        `UPDATE users
+                         SET password = ?, firstName = ?, lastName = ?, address = ?,
+                             gender = ?, roleId = ?, phoneNumber = ?, positionId = ?, image = ?
+                         WHERE id = ?`,
+                        [
+                            hashedPass, firstName, lastName,
+                            address || null, gender || null,
+                            roleId || null, phoneNumber || null,
+                            positionId || null, image || null,
+                            existingUser.id
+                        ]
+                    );
+
+                    await ensurePatientProfileForRole(existingUser.id, roleId, db);
+                });
 
                 return {
                     errCode: 0,
@@ -186,21 +200,27 @@ const createNewUserService = async (data) => {
         // Tạo mới user nếu email chưa tồn tại
         const hashedPass = await bcrypt.hash(password, 10);
 
-        const [result] = await connection.promise().query(
-            `INSERT INTO users(email, password, firstName, lastName, address, gender, roleId, phoneNumber, positionId, image)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [
-                email, hashedPass, firstName, lastName,
-                address || null, gender || null,
-                roleId || null, phoneNumber || null,
-                positionId || null, image || null
-            ]
-        );
+        const userId = await withTransaction(async (db) => {
+            const [result] = await db.query(
+                `INSERT INTO users(email, password, firstName, lastName, address, gender, roleId, phoneNumber, positionId, image)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                [
+                    email, hashedPass, firstName, lastName,
+                    address || null, gender || null,
+                    roleId || null, phoneNumber || null,
+                    positionId || null, image || null
+                ]
+            );
+
+            await ensurePatientProfileForRole(result.insertId, roleId, db);
+
+            return result.insertId;
+        });
 
         return {
             errCode: 0,
             errMessage: "User created successfully",
-            userId: result.insertId
+            userId
         };
 
     } catch (error) {

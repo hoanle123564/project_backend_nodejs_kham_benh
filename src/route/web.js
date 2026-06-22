@@ -44,8 +44,32 @@ const {
   postVerifyBookAppointment,
   getAllPatient,
   getListBookingForPatient,
-  postCancelBookAppointment
+  postCancelBookAppointment,
+  getPatientProfileAPI,
+  updatePatientProfileAPI
 } = require("../controller/patientController");
+
+const {
+  getDoctorPatients,
+  getDoctorPatientDetailApi,
+  getDoctorPatientHistoryApi,
+  getDoctorQueueApi,
+  getDoctorAppointmentDetailApi,
+  getDoctorMedicalRecordsApi,
+  ensureDoctorExaminationVisit,
+  getDoctorExaminationVisitDetail,
+  ensureDoctorMedicalRecord,
+  getMedicalRecordDetailApi,
+  saveMedicalRecordDraftApi,
+  ensureMedicalRecordPrescription,
+  saveMedicalRecordPrescription,
+  createMedicalRecordParaclinicalResult,
+  saveMedicalRecordParaclinicalResults,
+  completeMedicalRecordVisitApi,
+  getVisitPaymentSummaryApi,
+  collectVisitPaymentApi,
+  closeMedicalRecordApi,
+} = require("../controller/workflowController");
 
 // specialty controller
 const {
@@ -122,6 +146,25 @@ router.post("/api/save-doctor", authMiddleware, postInfoDoctor);
 router.post("/api/create-schedule-doctor", authMiddleware, CreateScheduleDoctor);
 router.get("/api/get-schedule-doctor", GetcheScheduleDoctor);
 router.get("/api/get-list-patient-for-doctor", authMiddleware, getListPatientForDoctor);
+router.get("/api/doctor/patients", authMiddleware, getDoctorPatients);
+router.get("/api/doctor/patient-detail", authMiddleware, getDoctorPatientDetailApi);
+router.get("/api/doctor/patient-history", authMiddleware, getDoctorPatientHistoryApi);
+router.get("/api/doctor/queue", authMiddleware, getDoctorQueueApi);
+router.get("/api/doctor/appointment-detail", authMiddleware, getDoctorAppointmentDetailApi);
+router.get("/api/doctor/medical-records", authMiddleware, getDoctorMedicalRecordsApi);
+router.post("/api/doctor/examination-visit", authMiddleware, ensureDoctorExaminationVisit);
+router.get("/api/doctor/examination-visit-detail", authMiddleware, getDoctorExaminationVisitDetail);
+router.post("/api/doctor/medical-record", authMiddleware, ensureDoctorMedicalRecord);
+router.get("/api/medical-record/detail", authMiddleware, getMedicalRecordDetailApi);
+router.post("/api/medical-record/draft", authMiddleware, saveMedicalRecordDraftApi);
+router.post("/api/medical-record/prescription", authMiddleware, ensureMedicalRecordPrescription);
+router.put("/api/medical-record/prescription", authMiddleware, saveMedicalRecordPrescription);
+router.post("/api/medical-record/paraclinical-result", authMiddleware, createMedicalRecordParaclinicalResult);
+router.put("/api/medical-record/paraclinical-results", authMiddleware, saveMedicalRecordParaclinicalResults);
+router.post("/api/medical-record/complete-visit", authMiddleware, completeMedicalRecordVisitApi);
+router.get("/api/doctor/visit-payment-summary", authMiddleware, getVisitPaymentSummaryApi);
+router.post("/api/doctor/collect-visit-payment", authMiddleware, collectVisitPaymentApi);
+router.post("/api/medical-record/close", authMiddleware, closeMedicalRecordApi);
 router.post("/api/send-remedy", authMiddleware, postSendRemedy);
 router.delete("/api/delete-schedule-doctor", authMiddleware, handleDeleteScheduleDoctor);
 router.get("/api/get-list-booking-appointment-doctor", authMiddleware, getListAppointmentForDoctor);
@@ -134,6 +177,8 @@ router.put("/api/change-status-doctor-info", authMiddleware, adminMiddleware, ha
 router.post("/api/patient-book-appointment", postBookAppointment);
 router.post("/api/verify-book-appointment", postVerifyBookAppointment);
 router.get("/api/all-patien", getAllPatient);
+router.get("/api/patient/profile", authMiddleware, getPatientProfileAPI);
+router.put("/api/patient/profile", authMiddleware, updatePatientProfileAPI);
 router.get("/api/get-list-booking-appointment-patient", authMiddleware, getListBookingForPatient);
 router.post("/api/cancel-book-appointment", authMiddleware, postCancelBookAppointment);
 
