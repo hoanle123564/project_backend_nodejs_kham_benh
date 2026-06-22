@@ -5,11 +5,15 @@ const { v4: uuidv4 } = require("uuid");
 require("dotenv").config();
 const { sendSimpleEmail } = require("./emailService");
 const { ensurePriceAtBookingColumn, getDoctorPriceAtBooking } = require("./adminDashboardService");
+const { withTransaction } = require("./transactionService");
+const { assignBookingQueueNumberInCurrentTransaction } = require("./bookingQueueService");
 
+// Tạo link xác nhận lịch gửi qua email cho bệnh nhân.
 const buildUrlEmail = (scheduleId, token) => {
   return `${process.env.URL_REACT}/verify-booking?token=${token}&scheduleId=${scheduleId}`;
 };
 
+// Lấy thông tin lịch khám và bác sĩ từ scheduleId để phục vụ đặt lịch.
 const getScheduleMeta = async (scheduleId) => {
   const [rows] = await connection.promise().query(
     `
@@ -32,6 +36,7 @@ const getScheduleMeta = async (scheduleId) => {
   return rows[0] || null;
 };
 
+// Xác định patientId: dùng id đăng nhập nếu có, nếu không thì tìm/tạo user bệnh nhân theo email.
 const resolvePatientId = async ({
   patientId,
   email,
@@ -40,18 +45,21 @@ const resolvePatientId = async ({
   address,
   gender,
   phoneNumber,
-}) => {
+}, db) => {
+  const executor = db || connection.promise();
+
   if (patientId) {
     return patientId;
   }
 
-  const [rows] = await connection.promise().query(
+  // Nếu email chưa tồn tại thì tạo tài khoản bệnh nhân tối giản cho booking.
+  const [rows] = await executor.query(
     `SELECT id FROM users WHERE email = ?`,
     [email]
   );
 
   if (rows.length === 0) {
-    const [insertUser] = await connection.promise().query(
+    const [insertUser] = await executor.query(
       `
         INSERT INTO users
           (email, firstName, lastName, address, gender, phoneNumber, roleId)
@@ -65,7 +73,8 @@ const resolvePatientId = async ({
 
   const realPatientId = rows[0].id;
 
-  await connection.promise().query(
+  // Nếu email đã có, cập nhật lại thông tin liên hệ mới nhất từ form đặt lịch.
+  await executor.query(
     `
       UPDATE users
       SET firstName = ?, lastName = ?, address = ?, gender = ?, phoneNumber = ?
@@ -77,6 +86,7 @@ const resolvePatientId = async ({
   return realPatientId;
 };
 
+// Đặt lịch khám, tạo booking và cấp STT hàng đợi trong cùng transaction.
 const bookAppointment = async (data) => {
   try {
     if (!data || !data.scheduleId) {
@@ -106,57 +116,83 @@ const bookAppointment = async (data) => {
     }
 
     const bookingDate = moment(date, ["DD/MM/YYYY", moment.ISO_8601]).format("YYYY-MM-DD");
-    const realPatientId = await resolvePatientId({
-      patientId,
-      email,
-      firstName,
-      lastName,
-      address,
-      gender,
-      phoneNumber,
+    const token = uuidv4();
+    await ensurePriceAtBookingColumn();
+    const priceAtBooking = await getDoctorPriceAtBooking(scheduleMeta.doctorId);
+
+    // Gói tạo/cập nhật bệnh nhân, chống đặt trùng và cấp queue trong một transaction.
+    const bookingResult = await withTransaction(async (db) => {
+      const realPatientId = await resolvePatientId({
+        patientId,
+        email,
+        firstName,
+        lastName,
+        address,
+        gender,
+        phoneNumber,
+      }, db);
+
+      const [existing] = await db.query(
+        `
+          SELECT id
+          FROM booking
+          WHERE scheduleId = ?
+            AND patientId = ?
+            AND date = ?
+        `,
+        [scheduleId, realPatientId, bookingDate]
+      );
+
+      if (existing.length > 0) {
+        return {
+          duplicate: true,
+        };
+      }
+
+      // Tạo booking ở trạng thái chờ xác nhận, sau đó cấp STT để bệnh nhân thấy số thứ tự.
+      const [booking] = await db.query(
+        `
+          INSERT INTO booking
+            (statusId, scheduleId, patientId, date, reason, token, priceAtBooking)
+          VALUES ('S1', ?, ?, ?, ?, ?, ?)
+        `,
+        [
+          scheduleId,
+          realPatientId,
+          bookingDate,
+          reason || null,
+          token,
+          priceAtBooking,
+        ]
+      );
+
+      const queue = await assignBookingQueueNumberInCurrentTransaction(
+        {
+          bookingId: booking.insertId,
+          doctorId: scheduleMeta.doctorId,
+          appointmentDate: bookingDate,
+        },
+        db
+      );
+
+      return {
+        duplicate: false,
+        booking,
+        queue: queue.data,
+      };
     });
 
-    const [existing] = await connection.promise().query(
-      `
-        SELECT id
-        FROM booking
-        WHERE scheduleId = ?
-          AND patientId = ?
-          AND date = ?
-      `,
-      [scheduleId, realPatientId, bookingDate]
-    );
-
-    if (existing.length > 0) {
+    if (bookingResult.duplicate) {
       return {
         errCode: 2,
         errMessage: "You already booked this schedule.",
       };
     }
 
-    const token = uuidv4();
-    await ensurePriceAtBookingColumn();
-    const priceAtBooking = await getDoctorPriceAtBooking(scheduleMeta.doctorId);
-
-    const [booking] = await connection.promise().query(
-      `
-        INSERT INTO booking
-          (statusId, scheduleId, patientId, date, reason, token, priceAtBooking)
-        VALUES ('S1', ?, ?, ?, ?, ?, ?)
-      `,
-      [
-        scheduleId,
-        realPatientId,
-        bookingDate,
-        reason || null,
-        token,
-        priceAtBooking,
-      ]
-    );
-
     const doctorName =
       `${scheduleMeta.firstName || ""} ${scheduleMeta.lastName || ""}`.trim() || "Bac si";
 
+    // Gửi email xác nhận sau khi transaction đã commit thành công.
     await sendSimpleEmail({
       reciverEmail: email,
       patientName: `${firstName} ${lastName}`.trim(),
@@ -168,7 +204,12 @@ const bookAppointment = async (data) => {
     return {
       errCode: 0,
       errMessage: "Booking appointment successfully!",
-      data: booking,
+      data: {
+        ...bookingResult.booking,
+        queueId: bookingResult.queue?.id || null,
+        queueNumber: bookingResult.queue?.queueNumber || null,
+        queueAppointmentDate: bookingResult.queue?.appointmentDate || bookingDate,
+      },
     };
   } catch (error) {
     console.log("bookAppointment error:", error);
@@ -180,6 +221,7 @@ const bookAppointment = async (data) => {
   }
 };
 
+// Xác nhận lịch hẹn từ token email và đảm bảo booking đã có STT hàng đợi.
 const verifyBookAppointment = async (data) => {
   const status = {};
   try {
@@ -192,32 +234,74 @@ const verifyBookAppointment = async (data) => {
 
     const { token, scheduleId } = data;
 
-    const [rows] = await connection.promise().query(
-      `
-        SELECT id
-        FROM booking
-        WHERE scheduleId = ? AND token = ? AND statusId = 'S1'
-      `,
-      [scheduleId, token]
-    );
+    // Khóa booking theo token để tránh hai request xác nhận cùng lúc làm lệch trạng thái/queue.
+    const verifyResult = await withTransaction(async (db) => {
+      const [rows] = await db.query(
+        `
+          SELECT
+            b.id,
+            b.date,
+            b.statusId,
+            s.doctorId
+          FROM booking b
+          INNER JOIN schedule s
+            ON s.id = b.scheduleId
+          WHERE b.scheduleId = ?
+            AND b.token = ?
+            AND b.statusId IN ('S1', 'S2')
+          LIMIT 1
+          FOR UPDATE
+        `,
+        [scheduleId, token]
+      );
 
-    if (rows.length === 0) {
+      if (rows.length === 0) {
+        return null;
+      }
+
+      const booking = rows[0];
+
+      // Chỉ nâng trạng thái S1 -> S2; booking đã S2 vẫn được trả lại thông tin queue.
+      if (booking.statusId === "S1") {
+        await db.query(
+          `
+            UPDATE booking
+            SET statusId = 'S2'
+            WHERE id = ? AND statusId = 'S1'
+          `,
+          [booking.id]
+        );
+      }
+
+      const queue = await assignBookingQueueNumberInCurrentTransaction(
+        {
+          bookingId: booking.id,
+          doctorId: booking.doctorId,
+          appointmentDate: booking.date,
+        },
+        db
+      );
+
+      return {
+        bookingId: booking.id,
+        queue: queue.data,
+      };
+    });
+
+    if (!verifyResult) {
       status.errCode = 2;
       status.errMessage = "Appointment has been activated or does not exist!";
       return status;
     }
 
-    await connection.promise().query(
-      `
-        UPDATE booking
-        SET statusId = 'S2'
-        WHERE scheduleId = ? AND token = ? AND statusId = 'S1'
-      `,
-      [scheduleId, token]
-    );
-
     status.errCode = 0;
     status.errMessage = "Appointment activated successfully!";
+    status.data = {
+      bookingId: verifyResult.bookingId,
+      queueId: verifyResult.queue?.id || null,
+      queueNumber: verifyResult.queue?.queueNumber || null,
+      queueAppointmentDate: verifyResult.queue?.appointmentDate || null,
+    };
     return status;
   } catch (error) {
     console.log("verifyBookAppointment error:", error);
@@ -227,6 +311,7 @@ const verifyBookAppointment = async (data) => {
   }
 };
 
+// Lấy toàn bộ user bệnh nhân trong hệ thống.
 const AllPatient = async () => {
   const status = {};
   try {
@@ -246,6 +331,7 @@ const AllPatient = async () => {
   }
 };
 
+// Lấy danh sách lịch hẹn của một bệnh nhân kèm STT, trạng thái và thông tin bác sĩ.
 const ListBookingForPatient = async (patientId) => {
   const status = {};
   try {
@@ -258,6 +344,8 @@ const ListBookingForPatient = async (patientId) => {
           s.timeType,
           s.doctorId,
           b.statusId,
+          bq.queueNumber,
+          bq.appointmentDate AS queueAppointmentDate,
           ls.value_en AS statusEn,
           ls.value_vi AS statusVi,
           lt.value_en AS timeEn,
@@ -269,6 +357,8 @@ const ListBookingForPatient = async (patientId) => {
           ON b.scheduleId = s.id
         INNER JOIN users u
           ON s.doctorId = u.id
+        LEFT JOIN booking_queue bq
+          ON bq.bookingId = b.id
         LEFT JOIN lookup ls
           ON b.statusId = ls.keyMap
          AND ls.type = 'STATUS'
@@ -276,7 +366,7 @@ const ListBookingForPatient = async (patientId) => {
           ON s.timeType = lt.keyMap
          AND lt.type = 'TIME'
         WHERE b.patientId = ?
-        ORDER BY b.date DESC, CAST(SUBSTRING(s.timeType, 2) AS UNSIGNED) ASC
+        ORDER BY b.date DESC, COALESCE(bq.queueNumber, 999999) ASC, CAST(SUBSTRING(s.timeType, 2) AS UNSIGNED) ASC
       `,
       [patientId]
     );
@@ -294,6 +384,7 @@ const ListBookingForPatient = async (patientId) => {
   }
 };
 
+// Hủy lịch hẹn nếu booking chưa hoàn tất và chưa bị hủy trước đó.
 const cancelBookAppointment = async (data) => {
   const status = {};
   try {

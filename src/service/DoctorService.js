@@ -460,7 +460,7 @@ const saveDetailInfoDoctor = async (data) => {
       // Thêm mới nếu chưa có
       await connection.promise().query(
         `
-        INSERT INTO doctor_info 
+        INSERT INTO doctor_info
           (doctorId, contentHTML, contentMarkdown, description, slug, isActive, displayOrder, priceId, paymentId, specialtyId, clinicId)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `,
@@ -634,16 +634,17 @@ const GetListPatientForDoctor = async (doctorId, date) => {
     const [rows] = await connection.promise().query(
       `
          SELECT b.id, b.scheduleId, b.date, s.timeType, b.statusId, b.reason,
-         s.doctorId, b.patientId,
+         s.doctorId, b.patientId, bq.queueNumber, bq.appointmentDate AS queueAppointmentDate,
                 u.email, u.firstName, u.lastName, u.address, u.phoneNumber,
                 a.value_vi AS timeTypeVi, a.value_en AS timeTypeEn
          FROM booking AS b
             INNER JOIN schedule AS s ON b.scheduleId = s.id
+            LEFT JOIN booking_queue AS bq ON bq.bookingId = b.id
             LEFT JOIN users AS u ON b.patientId = u.id
-            LEFT JOIN lookup AS a 
+            LEFT JOIN lookup AS a
                 ON s.timeType = a.keyMap AND a.type = 'TIME'
          WHERE s.doctorId = ? AND b.date = ? AND b.statusId = 'S2'
-         ORDER BY CAST(SUBSTRING(s.timeType, 2) AS UNSIGNED) ASC
+         ORDER BY COALESCE(bq.queueNumber, 999999) ASC, CAST(SUBSTRING(s.timeType, 2) AS UNSIGNED) ASC
         `,
       [doctorId, normalizedDate]
     );
@@ -664,14 +665,17 @@ const GetListPatientForDoctor = async (doctorId, date) => {
 const sendRemedy = async (data) => {
   const status = {};
   try {
+    const patientName = String(
+      data?.patientName ||
+        `${data?.firstNamePatient || ""} ${data?.lastNamePatient || ""}`
+    ).trim();
+
     if (
       !data ||
       !data.email ||
       !data.bookingId ||
       !data.time ||
-      !data.image ||
-      !data.firstNamePatient ||
-      !data.lastNamePatient
+      !patientName
     ) {
       status.errCode = 1;
       status.errMessage = "Missing required parameters";
@@ -680,12 +684,15 @@ const sendRemedy = async (data) => {
     const {
       email,
       bookingId,
-      image,
       time,
-      firstNamePatient,
-      lastNamePatient,
       reason,
+      doctorConclusion,
+      prescriptionItems,
+      prescription,
+      paraclinicalResults,
+      followUpDate,
     } = data;
+    const shouldUpdateBookingStatus = data.skipBookingStatusUpdate !== true;
 
     // Cập nhật trạng thái booking
     const [bookingRows] = await connection.promise().query(
@@ -696,7 +703,7 @@ const sendRemedy = async (data) => {
           ON b.scheduleId = s.id
         INNER JOIN users u
           ON s.doctorId = u.id
-        WHERE b.id = ? AND b.statusId = 'S2'
+        WHERE b.id = ? ${shouldUpdateBookingStatus ? "AND b.statusId = 'S2'" : ""}
         LIMIT 1
       `,
       [bookingId]
@@ -704,21 +711,25 @@ const sendRemedy = async (data) => {
 
     if (bookingRows.length === 0) {
       status.errCode = 2;
-      status.errMessage = "Appointment does not exist or is not ready for completion";
+      status.errMessage = shouldUpdateBookingStatus
+        ? "Appointment does not exist or is not ready for completion"
+        : "Appointment does not exist";
       return status;
     }
 
-    await connection.promise().query(
-      `
-        UPDATE booking
-        SET statusId = 'S3'
-        WHERE id = ? AND statusId = 'S2'
-      `,
-      [bookingId]
-    );
+    if (shouldUpdateBookingStatus) {
+      await connection.promise().query(
+        `
+          UPDATE booking
+          SET statusId = 'S3'
+          WHERE id = ? AND statusId = 'S2'
+        `,
+        [bookingId]
+      );
+    }
 
     // Gửi email (giả lập)
-    console.log(`Sending remedy to ${email} with attachment...`);
+    console.log(`Sending remedy to ${email}...`);
     // Thực tế bạn sẽ sử dụng một thư viện gửi email như nodemailer để thực hiện việc này
     // await new Promise((resolve) => setTimeout(resolve, 1000)); // Giả lập delay
 
@@ -729,15 +740,17 @@ const sendRemedy = async (data) => {
         ? `${doctorInfo[0].firstName} ${doctorInfo[0].lastName}`
         : "Bác sĩ";
 
-    const patientName = `${firstNamePatient} ${lastNamePatient}`;
-
     await sendResultEmail({
       reciverEmail: email,
       patientName: patientName,
       doctorName: doctorName,
-      image: image,
       time: time,
       reason: reason,
+      doctorConclusion,
+      bookingId,
+      prescriptionItems: prescriptionItems || prescription?.items || [],
+      paraclinicalResults: paraclinicalResults || [],
+      followUpDate,
     });
 
     console.log(`Remedy sent to ${email} successfully.`);
@@ -810,15 +823,17 @@ const GetListAppointment = async (doctorId) => {
     const [rows] = await connection.promise().query(
       `
          SELECT b.id, b.scheduleId, b.date, s.timeType, b.statusId, b.reason, b.patientId,
-                s.doctorId, u.email, u.firstName, u.lastName, u.address, u.phoneNumber,
+                s.doctorId, bq.queueNumber, bq.appointmentDate AS queueAppointmentDate,
+                u.email, u.firstName, u.lastName, u.address, u.phoneNumber,
                 a.value_vi AS timeTypeVi, a.value_en AS timeTypeEn
          FROM booking AS b
             INNER JOIN schedule AS s ON b.scheduleId = s.id
+            LEFT JOIN booking_queue AS bq ON bq.bookingId = b.id
             LEFT JOIN users AS u ON b.patientId = u.id
-            LEFT JOIN lookup AS a 
+            LEFT JOIN lookup AS a
                 ON s.timeType = a.keyMap AND a.type = 'TIME'
           WHERE s.doctorId = ?
-          ORDER BY b.date DESC, CAST(SUBSTRING(s.timeType, 2) AS UNSIGNED) ASC
+          ORDER BY b.date DESC, COALESCE(bq.queueNumber, 999999) ASC, CAST(SUBSTRING(s.timeType, 2) AS UNSIGNED) ASC
         `,
       [doctorId]
     );
@@ -858,6 +873,8 @@ const ListBooking = async (user) => {
           b.statusId,
           b.reason,
           b.token,
+          bq.queueNumber,
+          bq.appointmentDate AS queueAppointmentDate,
 
           -- Trạng thái khám bệnh
           ls.value_en AS statusEn,
@@ -885,8 +902,11 @@ const ListBooking = async (user) => {
           ON b.scheduleId = s.id
 
       -- JOIN bảng users cho bác sĩ
-      JOIN users doctor 
+      JOIN users doctor
           ON s.doctorId = doctor.id
+
+      LEFT JOIN booking_queue bq
+          ON bq.bookingId = b.id
 
       LEFT JOIN doctor_info di
           ON di.doctorId = s.doctorId
@@ -909,7 +929,7 @@ const ListBooking = async (user) => {
          AND lt.type = 'TIME'
 
       ${scope.whereClause}
-      ORDER BY b.date DESC, CAST(SUBSTRING(s.timeType, 2) AS UNSIGNED) ASC
+      ORDER BY b.date DESC, COALESCE(bq.queueNumber, 999999) ASC, CAST(SUBSTRING(s.timeType, 2) AS UNSIGNED) ASC
       `,
       scope.params
     );
