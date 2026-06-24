@@ -148,7 +148,21 @@ const getAllUsersService = async (id) => {
 // CREATE USER
 const createNewUserService = async (data) => {
     try {
-        const { email, password, firstName, lastName, address, gender, roleId, phoneNumber, positionId, image } = data;
+        const {
+            email,
+            password,
+            firstName,
+            lastName,
+            address,
+            provinceCode,
+            districtCode,
+            wardCode,
+            gender,
+            roleId,
+            phoneNumber,
+            positionId,
+            image
+        } = data;
 
         if (!email || !password || !firstName || !lastName) {
             return { errCode: 1, errMessage: "Missing required parameters" };
@@ -172,11 +186,16 @@ const createNewUserService = async (data) => {
                     await db.query(
                         `UPDATE users
                          SET password = ?, firstName = ?, lastName = ?, address = ?,
+                             provinceCode = ?, districtCode = ?, wardCode = ?,
                              gender = ?, roleId = ?, phoneNumber = ?, positionId = ?, image = ?
                          WHERE id = ?`,
                         [
                             hashedPass, firstName, lastName,
-                            address || null, gender || null,
+                            address || null,
+                            provinceCode || null,
+                            districtCode || null,
+                            wardCode || null,
+                            gender || null,
                             roleId || null, phoneNumber || null,
                             positionId || null, image || null,
                             existingUser.id
@@ -202,11 +221,15 @@ const createNewUserService = async (data) => {
 
         const userId = await withTransaction(async (db) => {
             const [result] = await db.query(
-                `INSERT INTO users(email, password, firstName, lastName, address, gender, roleId, phoneNumber, positionId, image)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                `INSERT INTO users(email, password, firstName, lastName, address, provinceCode, districtCode, wardCode, gender, roleId, phoneNumber, positionId, image)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                 [
                     email, hashedPass, firstName, lastName,
-                    address || null, gender || null,
+                    address || null,
+                    provinceCode || null,
+                    districtCode || null,
+                    wardCode || null,
+                    gender || null,
                     roleId || null, phoneNumber || null,
                     positionId || null, image || null
                 ]
@@ -397,7 +420,21 @@ const deleteUserService = async (id) => {
 // UPDATE USER
 const updateUserService = async (data) => {
     try {
-        const { id, firstName, lastName, email, address, gender, roleId, phoneNumber, positionId, image } = data;
+        const {
+            id,
+            firstName,
+            lastName,
+            email,
+            address,
+            provinceCode,
+            districtCode,
+            wardCode,
+            gender,
+            roleId,
+            phoneNumber,
+            positionId,
+            image
+        } = data;
         if (image) { console.log('image in service:'); }
 
         if (!id) {
@@ -414,10 +451,17 @@ const updateUserService = async (data) => {
         }
 
         await connection.promise().query(
-            `UPDATE users SET firstName=?, lastName=?, email=?, address=?, gender=?, roleId=?, phoneNumber=?, positionId=?, image=? WHERE id=?`,
+            `UPDATE users
+             SET firstName=?, lastName=?, email=?, address=?, provinceCode=?, districtCode=?, wardCode=?,
+                 gender=?, roleId=?, phoneNumber=?, positionId=?, image=?
+             WHERE id=?`,
             [
                 firstName || null, lastName || null, email || null,
-                address || null, gender || null, roleId || null,
+                address || null,
+                provinceCode || null,
+                districtCode || null,
+                wardCode || null,
+                gender || null, roleId || null,
                 phoneNumber || null, positionId || null, image || null,
                 id
             ]
