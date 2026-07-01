@@ -19,6 +19,9 @@ const {
 const {
   getAdminDashboardStatistics
 } = require("../controller/adminController");
+const {
+  getDoctorDashboardStatisticsApi,
+} = require("../controller/doctorDashboardController");
 
 // doctor controller
 const {
@@ -70,6 +73,10 @@ const {
   collectVisitPaymentApi,
   closeMedicalRecordApi,
 } = require("../controller/workflowController");
+const {
+  postJoinToken,
+  postMarkStarted,
+} = require("../controller/videoConsultationController");
 
 // specialty controller
 const {
@@ -152,6 +159,7 @@ router.get("/api/doctor/patient-history", authMiddleware, getDoctorPatientHistor
 router.get("/api/doctor/queue", authMiddleware, getDoctorQueueApi);
 router.get("/api/doctor/appointment-detail", authMiddleware, getDoctorAppointmentDetailApi);
 router.get("/api/doctor/medical-records", authMiddleware, getDoctorMedicalRecordsApi);
+router.get("/api/doctor/dashboard-statistics", authMiddleware, getDoctorDashboardStatisticsApi);
 router.post("/api/doctor/examination-visit", authMiddleware, ensureDoctorExaminationVisit);
 router.get("/api/doctor/examination-visit-detail", authMiddleware, getDoctorExaminationVisitDetail);
 router.post("/api/doctor/medical-record", authMiddleware, ensureDoctorMedicalRecord);
@@ -181,6 +189,10 @@ router.get("/api/patient/profile", authMiddleware, getPatientProfileAPI);
 router.put("/api/patient/profile", authMiddleware, updatePatientProfileAPI);
 router.get("/api/get-list-booking-appointment-patient", authMiddleware, getListBookingForPatient);
 router.post("/api/cancel-book-appointment", authMiddleware, postCancelBookAppointment);
+
+// video consultation routes
+router.post("/api/video-consultation/join-token", authMiddleware, postJoinToken);
+router.post("/api/video-consultation/mark-started", authMiddleware, postMarkStarted);
 
 
 // specialty routes
