@@ -1,6 +1,10 @@
 const { getDb, withTransaction } = require("./transactionService");
 const { sendRemedy } = require("./DoctorService");
 const {
+  ensureVideoSessionForOnlineBookingInCurrentTransaction,
+  markVideoSessionEndedForBookingInCurrentTransaction,
+} = require("./videoConsultationService");
+const {
   BOOKING_STATUS,
   LOOKUP_TYPES,
   VISIT_STATUS,
@@ -354,15 +358,23 @@ const startExaminationVisitForBookingInCurrentTransaction = async (data, db) => 
     executor
   );
   const record = recordResult.data || {};
+  const videoSession = await ensureVideoSessionForOnlineBookingInCurrentTransaction(
+    currentVisit.bookingId,
+    executor
+  );
 
   return {
     created: result.created,
     started,
     recordCreated: recordResult.created,
+    videoSessionCreated: Boolean(videoSession?.sessionId),
     data: {
       ...currentVisit,
       medicalRecordId: record.id || null,
       medicalRecordStatusId: record.statusId || null,
+      videoSessionId: videoSession?.sessionId || null,
+      videoRoomId: videoSession?.roomId || null,
+      videoSessionStatusId: videoSession?.videoSessionStatusId || null,
     },
   };
 };
@@ -1131,6 +1143,7 @@ const markBookingCompletedForVisitInCurrentTransaction = async (context, db) => 
     `,
     [BOOKING_STATUS.COMPLETED, context.bookingId, BOOKING_STATUS.CONFIRMED]
   );
+  await markVideoSessionEndedForBookingInCurrentTransaction(context.bookingId, db);
 };
 
 // Định dạng ngày gửi trong email kết quả khám.

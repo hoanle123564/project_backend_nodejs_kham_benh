@@ -19,6 +19,7 @@ const {
   getVisitPaymentSummary,
   collectVisitPayment,
 } = require("./examinationWorkflowService");
+const { canDoctorOpenVideoBooking } = require("./videoConsultationService");
 
 const VALID_DOCTOR_PATIENT_BOOKING_STATUSES = Object.freeze([
   BOOKING_STATUS.PENDING,
@@ -362,8 +363,11 @@ const getDoctorPatientHistory = async (query) => {
           b.statusId AS bookingStatusId,
           b.priceAtBooking,
           s.timeType,
+          s.appointmentTypeId,
           lt.value_vi AS timeTypeVi,
           lt.value_en AS timeTypeEn,
+          lat.value_vi AS appointmentTypeVi,
+          lat.value_en AS appointmentTypeEn,
           bq.queueNumber,
           ev.id AS examinationVisitId,
           ev.statusId AS visitStatusId,
@@ -380,6 +384,8 @@ const getDoctorPatientHistory = async (query) => {
           ON s.id = b.scheduleId
         LEFT JOIN lookup lt
           ON lt.keyMap = s.timeType AND lt.type = 'TIME'
+        LEFT JOIN lookup lat
+          ON lat.keyMap = s.appointmentTypeId AND lat.type = 'APPOINTMENT_TYPE'
         LEFT JOIN booking_queue bq
           ON bq.bookingId = b.id
         LEFT JOIN examination_visit ev
@@ -400,8 +406,11 @@ const getDoctorPatientHistory = async (query) => {
           b.statusId,
           b.priceAtBooking,
           s.timeType,
+          s.appointmentTypeId,
           lt.value_vi,
           lt.value_en,
+          lat.value_vi,
+          lat.value_en,
           bq.queueNumber,
           ev.id,
           ev.statusId,
@@ -469,8 +478,11 @@ const getDoctorQueue = async (query) => {
           b.statusId AS bookingStatusId,
           b.priceAtBooking,
           s.timeType,
+          s.appointmentTypeId,
           lt.value_vi AS timeTypeVi,
           lt.value_en AS timeTypeEn,
+          lat.value_vi AS appointmentTypeVi,
+          lat.value_en AS appointmentTypeEn,
           bq.queueNumber,
           bq.id AS bookingQueueId,
           ev.id AS examinationVisitId,
@@ -492,7 +504,10 @@ const getDoctorQueue = async (query) => {
           lvs.value_vi AS visitStatusVi,
           lvs.value_en AS visitStatusEn,
           lps.value_vi AS paymentStatusVi,
-          lps.value_en AS paymentStatusEn
+          lps.value_en AS paymentStatusEn,
+          vcs.statusId AS videoSessionStatusId,
+          vcs.startedAt AS videoStartedAt,
+          vcs.endedAt AS videoEndedAt
         FROM booking b
         INNER JOIN schedule s
           ON s.id = b.scheduleId
@@ -504,10 +519,14 @@ const getDoctorQueue = async (query) => {
           ON pp.patientId = patient.id
         LEFT JOIN lookup lt
           ON lt.keyMap = s.timeType AND lt.type = 'TIME'
+        LEFT JOIN lookup lat
+          ON lat.keyMap = s.appointmentTypeId AND lat.type = 'APPOINTMENT_TYPE'
         LEFT JOIN examination_visit ev
           ON ev.bookingId = b.id
         LEFT JOIN medical_record mr
           ON mr.bookingId = b.id
+        LEFT JOIN video_consultation_session vcs
+          ON vcs.bookingId = b.id
         LEFT JOIN lookup lvs
           ON lvs.keyMap = COALESCE(ev.statusId, 'VS1') AND lvs.type = 'VISIT_STATUS'
         LEFT JOIN lookup lps
@@ -521,7 +540,13 @@ const getDoctorQueue = async (query) => {
       params
     );
 
-    return ok(rows || [], { appointmentDate });
+    return ok(
+      (rows || []).map((row) => ({
+        ...row,
+        canJoinVideo: canDoctorOpenVideoBooking(row),
+      })),
+      { appointmentDate }
+    );
   } catch (error) {
     return errorResponse(error, []);
   }
@@ -541,8 +566,11 @@ const getDoctorAppointmentDetail = async (query) => {
           b.statusId AS bookingStatusId,
           b.priceAtBooking,
           s.timeType,
+          s.appointmentTypeId,
           lt.value_vi AS timeTypeVi,
           lt.value_en AS timeTypeEn,
+          lat.value_vi AS appointmentTypeVi,
+          lat.value_en AS appointmentTypeEn,
           bq.queueNumber,
           bq.id AS bookingQueueId,
           ev.id AS examinationVisitId,
@@ -567,7 +595,10 @@ const getDoctorAppointmentDetail = async (query) => {
           lps.value_vi AS paymentStatusVi,
           lps.value_en AS paymentStatusEn,
           lpm.value_vi AS paymentMethodVi,
-          lpm.value_en AS paymentMethodEn
+          lpm.value_en AS paymentMethodEn,
+          vcs.statusId AS videoSessionStatusId,
+          vcs.startedAt AS videoStartedAt,
+          vcs.endedAt AS videoEndedAt
         FROM booking b
         INNER JOIN schedule s
           ON s.id = b.scheduleId
@@ -579,10 +610,14 @@ const getDoctorAppointmentDetail = async (query) => {
           ON pp.patientId = patient.id
         LEFT JOIN lookup lt
           ON lt.keyMap = s.timeType AND lt.type = 'TIME'
+        LEFT JOIN lookup lat
+          ON lat.keyMap = s.appointmentTypeId AND lat.type = 'APPOINTMENT_TYPE'
         LEFT JOIN examination_visit ev
           ON ev.bookingId = b.id
         LEFT JOIN medical_record mr
           ON mr.bookingId = b.id
+        LEFT JOIN video_consultation_session vcs
+          ON vcs.bookingId = b.id
         LEFT JOIN lookup lvs
           ON lvs.keyMap = COALESCE(ev.statusId, 'VS1') AND lvs.type = 'VISIT_STATUS'
         LEFT JOIN lookup lps
@@ -609,7 +644,10 @@ const getDoctorAppointmentDetail = async (query) => {
       };
     }
 
-    return ok(rows[0]);
+    return ok({
+      ...rows[0],
+      canJoinVideo: canDoctorOpenVideoBooking(rows[0]),
+    });
   } catch (error) {
     return errorResponse(error, {});
   }
@@ -762,6 +800,7 @@ const startVisitForBooking = async (data) => {
       created: result.created,
       started: result.started,
       recordCreated: result.recordCreated,
+      videoSessionCreated: result.videoSessionCreated,
     });
   } catch (error) {
     return errorResponse(error, {});
@@ -784,8 +823,11 @@ const getExaminationVisitDetail = async (query) => {
           b.statusId AS bookingStatusId,
           b.priceAtBooking,
           s.timeType,
+          s.appointmentTypeId,
           lt.value_vi AS timeTypeVi,
           lt.value_en AS timeTypeEn,
+          lat.value_vi AS appointmentTypeVi,
+          lat.value_en AS appointmentTypeEn,
           patient.email AS patientEmail,
           patient.firstName AS patientFirstName,
           patient.lastName AS patientLastName,
@@ -801,7 +843,10 @@ const getExaminationVisitDetail = async (query) => {
           lps.value_vi AS paymentStatusVi,
           lps.value_en AS paymentStatusEn,
           mr.id AS medicalRecordId,
-          mr.statusId AS medicalRecordStatusId
+          mr.statusId AS medicalRecordStatusId,
+          vcs.statusId AS videoSessionStatusId,
+          vcs.startedAt AS videoStartedAt,
+          vcs.endedAt AS videoEndedAt
         FROM examination_visit ev
         INNER JOIN booking b
           ON b.id = ev.bookingId
@@ -815,12 +860,16 @@ const getExaminationVisitDetail = async (query) => {
           ON pp.patientId = ev.patientId
         LEFT JOIN lookup lt
           ON lt.keyMap = s.timeType AND lt.type = 'TIME'
+        LEFT JOIN lookup lat
+          ON lat.keyMap = s.appointmentTypeId AND lat.type = 'APPOINTMENT_TYPE'
         LEFT JOIN lookup lvs
           ON lvs.keyMap = ev.statusId AND lvs.type = 'VISIT_STATUS'
         LEFT JOIN lookup lps
           ON lps.keyMap = ev.paymentStatusId AND lps.type = 'PAYMENT_STATUS'
         LEFT JOIN medical_record mr
           ON mr.examinationVisitId = ev.id
+        LEFT JOIN video_consultation_session vcs
+          ON vcs.bookingId = b.id
         WHERE ev.id = ?
         LIMIT 1
       `,
@@ -835,7 +884,10 @@ const getExaminationVisitDetail = async (query) => {
       };
     }
 
-    return ok(rows[0]);
+    return ok({
+      ...rows[0],
+      canJoinVideo: canDoctorOpenVideoBooking(rows[0]),
+    });
   } catch (error) {
     return errorResponse(error, {});
   }

@@ -172,7 +172,7 @@ const getDetailDoctorById = async (query) => {
             SELECT
               di.id AS doctorInfoId, di.doctorId, di.slug, di.isActive, di.displayOrder,
               di.contentHTML, di.contentMarkdown, di.description,
-              di.priceId, di.paymentId, di.clinicId, di.specialtyId,
+              di.priceId, di.onlinePriceId, di.paymentId, di.clinicId, di.specialtyId,
               c.clinicTypeId, c.address AS clinicAddress, c.provinceCode, c.districtCode, c.wardCode,
               COALESCE(lp.value_vi, c.provinceCode) AS province
             FROM doctor_info di
@@ -198,6 +198,17 @@ const getDetailDoctorById = async (query) => {
     );
 
     const price = priceRows[0] || {};
+
+    const [onlinePriceRows] = await connection.promise().query(
+      `
+            SELECT value_vi AS onlinePriceVi, value_en AS onlinePriceEn
+            FROM lookup
+            WHERE keyMap = ? AND type = 'PRICE'
+        `,
+      [dc.onlinePriceId]
+    );
+
+    const onlinePrice = onlinePriceRows[0] || {};
 
     const [paymentRows] = await connection.promise().query(
       `
@@ -244,6 +255,7 @@ const getDetailDoctorById = async (query) => {
       ...user,
       ...dc,
       ...price,
+      ...onlinePrice,
       ...payment,
       ...specialty,
       ...clinic,
@@ -292,6 +304,9 @@ const getAllDoctorHome = async () => {
           di.slug,
           di.isActive,
           di.displayOrder,
+          di.onlinePriceId,
+          onlinePrice.value_vi AS onlinePriceVi,
+          onlinePrice.value_en AS onlinePriceEn,
           di.specialtyId,
           di.clinicId,
           s.slug AS specialtySlug,
@@ -309,6 +324,8 @@ const getAllDoctorHome = async () => {
           ON u.positionId = p.keyMap AND p.type = 'POSITION'
         LEFT JOIN doctor_info AS di
           ON di.doctorId = u.id
+        LEFT JOIN lookup AS onlinePrice
+          ON onlinePrice.keyMap = di.onlinePriceId AND onlinePrice.type = 'PRICE'
         LEFT JOIN specialty AS s
           ON s.id = di.specialtyId
         LEFT JOIN clinic AS c
@@ -366,6 +383,10 @@ const saveDetailInfoDoctor = async (data) => {
     }
 
     const { doctorId, priceId, paymentId, clinicId, specialtyId, description } = data;
+    const onlinePriceId =
+      data.onlinePriceId && String(data.onlinePriceId).trim()
+        ? String(data.onlinePriceId).trim()
+        : null;
 
     console.log(">>> Save doctor detail:", data);
 
@@ -438,7 +459,7 @@ const saveDetailInfoDoctor = async (data) => {
         `
        UPDATE doctor_info
           SET contentHTML = ?, contentMarkdown = ?, description = ?,
-              priceId = ?, paymentId = ?, specialtyId = ?, clinicId = ?,
+              priceId = ?, onlinePriceId = ?, paymentId = ?, specialtyId = ?, clinicId = ?,
               slug = ?, isActive = ?, displayOrder = ?
           WHERE doctorId = ?
         `,
@@ -447,6 +468,7 @@ const saveDetailInfoDoctor = async (data) => {
           contentMarkdown,
           description || null,
           priceId,
+          onlinePriceId,
           paymentId,
           specialtyId,
           clinicId,
@@ -461,8 +483,8 @@ const saveDetailInfoDoctor = async (data) => {
       await connection.promise().query(
         `
         INSERT INTO doctor_info
-          (doctorId, contentHTML, contentMarkdown, description, slug, isActive, displayOrder, priceId, paymentId, specialtyId, clinicId)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          (doctorId, contentHTML, contentMarkdown, description, slug, isActive, displayOrder, priceId, onlinePriceId, paymentId, specialtyId, clinicId)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `,
         [
           doctorId,
@@ -473,6 +495,7 @@ const saveDetailInfoDoctor = async (data) => {
           isActive,
           displayOrder,
           priceId,
+          onlinePriceId,
           paymentId,
           specialtyId,
           clinicId,
@@ -506,6 +529,8 @@ const normalizeDate = (dateValue) => {
   return moment(dateValue).format("YYYY-MM-DD");
 };
 
+const DEFAULT_APPOINTMENT_TYPE_ID = "AT1";
+
 const PostScheduleDoctor = async (data) => {
   const status = {};
   try {
@@ -517,11 +542,21 @@ const PostScheduleDoctor = async (data) => {
 
     const maxNumber = 10;
     const { doctorId, date, timeType } = data;
+    const appointmentTypeId =
+      data.appointmentTypeId && String(data.appointmentTypeId).trim()
+        ? String(data.appointmentTypeId).trim()
+        : DEFAULT_APPOINTMENT_TYPE_ID;
 
     // Chuẩn hóa định dạng ngày (trước khi dùng)
 
     // Chuẩn bị mảng insert
-    let values = timeType.map((slot) => [maxNumber, doctorId, date, slot]);
+    let values = timeType.map((slot) => [
+      maxNumber,
+      doctorId,
+      date,
+      slot,
+      appointmentTypeId,
+    ]);
     console.log("Bulk insert values:", values);
 
     const [rows] = await connection
@@ -564,7 +599,7 @@ const PostScheduleDoctor = async (data) => {
     //  Insert dữ liệu chuẩn
     const [result] = await connection.promise().query(
       `
-      INSERT INTO schedule (maxNumber, doctorId, date, timeType)
+      INSERT INTO schedule (maxNumber, doctorId, date, timeType, appointmentTypeId)
       VALUES ?`,
       [values]
     );
@@ -596,11 +631,15 @@ const GetcheScheduleDoctorByDate = async (doctorId, date) => {
     const normalizedDate = normalizeDate(date);
     const [rows] = await connection.promise().query(
       `
-       SELECT s.id, s.doctorId, s.date, s.timeType, s.maxNumber,
-           a.value_vi, a.value_en
+       SELECT s.id, s.doctorId, s.date, s.timeType, s.appointmentTypeId, s.maxNumber,
+            a.value_vi, a.value_en,
+            appointmentType.value_vi AS appointmentTypeVi,
+            appointmentType.value_en AS appointmentTypeEn
     FROM schedule AS s
     LEFT JOIN lookup AS a 
         ON s.timeType = a.keyMap AND a.type = 'TIME'
+    LEFT JOIN lookup AS appointmentType
+        ON s.appointmentTypeId = appointmentType.keyMap AND appointmentType.type = 'APPOINTMENT_TYPE'
     WHERE s.doctorId = ? AND s.date = ?
     ORDER BY CAST(SUBSTRING(s.timeType, 2) AS UNSIGNED) ASC
       `,
@@ -633,16 +672,25 @@ const GetListPatientForDoctor = async (doctorId, date) => {
     const normalizedDate = normalizeDate(date);
     const [rows] = await connection.promise().query(
       `
-         SELECT b.id, b.scheduleId, b.date, s.timeType, b.statusId, b.reason,
+         SELECT b.id, b.scheduleId, b.date, s.timeType, s.appointmentTypeId, b.statusId, b.reason,
          s.doctorId, b.patientId, bq.queueNumber, bq.appointmentDate AS queueAppointmentDate,
                 u.email, u.firstName, u.lastName, u.address, u.phoneNumber,
-                a.value_vi AS timeTypeVi, a.value_en AS timeTypeEn
+                a.value_vi AS timeTypeVi, a.value_en AS timeTypeEn,
+                appointmentType.value_vi AS appointmentTypeVi,
+                appointmentType.value_en AS appointmentTypeEn,
+                vcs.statusId AS videoSessionStatusId,
+                vcs.startedAt AS videoStartedAt,
+                vcs.endedAt AS videoEndedAt
          FROM booking AS b
             INNER JOIN schedule AS s ON b.scheduleId = s.id
             LEFT JOIN booking_queue AS bq ON bq.bookingId = b.id
             LEFT JOIN users AS u ON b.patientId = u.id
             LEFT JOIN lookup AS a
                 ON s.timeType = a.keyMap AND a.type = 'TIME'
+            LEFT JOIN lookup AS appointmentType
+                ON s.appointmentTypeId = appointmentType.keyMap AND appointmentType.type = 'APPOINTMENT_TYPE'
+            LEFT JOIN video_consultation_session AS vcs
+                ON vcs.bookingId = b.id
          WHERE s.doctorId = ? AND b.date = ? AND b.statusId = 'S2'
          ORDER BY COALESCE(bq.queueNumber, 999999) ASC, CAST(SUBSTRING(s.timeType, 2) AS UNSIGNED) ASC
         `,
@@ -822,16 +870,25 @@ const GetListAppointment = async (doctorId) => {
     }
     const [rows] = await connection.promise().query(
       `
-         SELECT b.id, b.scheduleId, b.date, s.timeType, b.statusId, b.reason, b.patientId,
+         SELECT b.id, b.scheduleId, b.date, s.timeType, s.appointmentTypeId, b.statusId, b.reason, b.patientId,
                 s.doctorId, bq.queueNumber, bq.appointmentDate AS queueAppointmentDate,
                 u.email, u.firstName, u.lastName, u.address, u.phoneNumber,
-                a.value_vi AS timeTypeVi, a.value_en AS timeTypeEn
+                a.value_vi AS timeTypeVi, a.value_en AS timeTypeEn,
+                appointmentType.value_vi AS appointmentTypeVi,
+                appointmentType.value_en AS appointmentTypeEn,
+                vcs.statusId AS videoSessionStatusId,
+                vcs.startedAt AS videoStartedAt,
+                vcs.endedAt AS videoEndedAt
          FROM booking AS b
             INNER JOIN schedule AS s ON b.scheduleId = s.id
             LEFT JOIN booking_queue AS bq ON bq.bookingId = b.id
             LEFT JOIN users AS u ON b.patientId = u.id
             LEFT JOIN lookup AS a
                 ON s.timeType = a.keyMap AND a.type = 'TIME'
+            LEFT JOIN lookup AS appointmentType
+                ON s.appointmentTypeId = appointmentType.keyMap AND appointmentType.type = 'APPOINTMENT_TYPE'
+            LEFT JOIN video_consultation_session AS vcs
+                ON vcs.bookingId = b.id
           WHERE s.doctorId = ?
           ORDER BY b.date DESC, COALESCE(bq.queueNumber, 999999) ASC, CAST(SUBSTRING(s.timeType, 2) AS UNSIGNED) ASC
         `,
@@ -870,6 +927,7 @@ const ListBooking = async (user) => {
           b.scheduleId,
           b.date,
           s.timeType,
+          s.appointmentTypeId,
           b.statusId,
           b.reason,
           b.token,
@@ -883,6 +941,12 @@ const ListBooking = async (user) => {
           -- Khung giờ khám
           lt.value_en AS timeEn,
           lt.value_vi AS timeVi,
+
+          appointmentType.value_en AS appointmentTypeEn,
+          appointmentType.value_vi AS appointmentTypeVi,
+          vcs.statusId AS videoSessionStatusId,
+          vcs.startedAt AS videoStartedAt,
+          vcs.endedAt AS videoEndedAt,
 
           -- Thông tin bác sĩ
           doctor.firstName AS doctorFirstName,
@@ -927,6 +991,13 @@ const ListBooking = async (user) => {
       LEFT JOIN lookup lt
           ON s.timeType = lt.keyMap
          AND lt.type = 'TIME'
+
+      LEFT JOIN lookup appointmentType
+          ON s.appointmentTypeId = appointmentType.keyMap
+         AND appointmentType.type = 'APPOINTMENT_TYPE'
+
+      LEFT JOIN video_consultation_session vcs
+          ON vcs.bookingId = b.id
 
       ${scope.whereClause}
       ORDER BY b.date DESC, COALESCE(bq.queueNumber, 999999) ASC, CAST(SUBSTRING(s.timeType, 2) AS UNSIGNED) ASC

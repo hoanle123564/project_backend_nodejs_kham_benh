@@ -7,6 +7,12 @@ const { sendSimpleEmail } = require("./emailService");
 const { ensurePriceAtBookingColumn, getDoctorPriceAtBooking } = require("./adminDashboardService");
 const { withTransaction } = require("./transactionService");
 const { assignBookingQueueNumberInCurrentTransaction } = require("./bookingQueueService");
+const {
+  APPOINTMENT_TYPE_ONLINE,
+  VIDEO_STATUS_IN_CALL,
+  canPatientJoinVideoBooking,
+  markVideoSessionCancelledForBooking,
+} = require("./videoConsultationService");
 
 // Tạo link xác nhận lịch gửi qua email cho bệnh nhân.
 const buildUrlEmail = (scheduleId, token) => {
@@ -22,6 +28,7 @@ const getScheduleMeta = async (scheduleId) => {
         s.doctorId,
         s.date,
         s.timeType,
+        s.appointmentTypeId,
         u.firstName,
         u.lastName
       FROM schedule s
@@ -118,7 +125,10 @@ const bookAppointment = async (data) => {
     const bookingDate = moment(date, ["DD/MM/YYYY", moment.ISO_8601]).format("YYYY-MM-DD");
     const token = uuidv4();
     await ensurePriceAtBookingColumn();
-    const priceAtBooking = await getDoctorPriceAtBooking(scheduleMeta.doctorId);
+    const priceAtBooking = await getDoctorPriceAtBooking(
+      scheduleMeta.doctorId,
+      scheduleMeta.appointmentTypeId
+    );
 
     // Gói tạo/cập nhật bệnh nhân, chống đặt trùng và cấp queue trong một transaction.
     const bookingResult = await withTransaction(async (db) => {
@@ -342,6 +352,7 @@ const ListBookingForPatient = async (patientId) => {
           b.scheduleId,
           b.date,
           s.timeType,
+          s.appointmentTypeId,
           s.doctorId,
           b.statusId,
           bq.queueNumber,
@@ -350,21 +361,57 @@ const ListBookingForPatient = async (patientId) => {
           ls.value_vi AS statusVi,
           lt.value_en AS timeEn,
           lt.value_vi AS timeVi,
+          lat.value_en AS appointmentTypeEn,
+          lat.value_vi AS appointmentTypeVi,
           u.firstName AS doctorFirstName,
-          u.lastName AS doctorLastName
+          u.lastName AS doctorLastName,
+          u.image AS doctorImage,
+          clinic.name AS clinicName,
+          clinic.address AS clinicAddress,
+          patient.firstName AS patientFirstName,
+          patient.lastName AS patientLastName,
+          patient.email AS patientEmail,
+          patient.phoneNumber AS patientPhoneNumber,
+          patient.address AS patientAddress,
+          patient.gender AS patientGender,
+          pp.medicalCode,
+          pp.dateOfBirth,
+          mr.id AS medicalRecordId,
+          mr.doctorConclusion,
+          mr.preliminaryDiagnosis,
+          mr.followUpDate,
+          mr.statusId AS medicalRecordStatusId,
+          vcs.statusId AS videoSessionStatusId,
+          vcs.startedAt AS videoStartedAt,
+          vcs.endedAt AS videoEndedAt
         FROM booking b
         INNER JOIN schedule s
           ON b.scheduleId = s.id
         INNER JOIN users u
           ON s.doctorId = u.id
+        INNER JOIN users patient
+          ON b.patientId = patient.id
+        LEFT JOIN doctor_info di
+          ON di.doctorId = s.doctorId
+        LEFT JOIN clinic
+          ON clinic.id = di.clinicId
         LEFT JOIN booking_queue bq
           ON bq.bookingId = b.id
+        LEFT JOIN patient_profile pp
+          ON pp.patientId = patient.id
+        LEFT JOIN medical_record mr
+          ON mr.bookingId = b.id
+        LEFT JOIN video_consultation_session vcs
+          ON vcs.bookingId = b.id
         LEFT JOIN lookup ls
           ON b.statusId = ls.keyMap
          AND ls.type = 'STATUS'
         LEFT JOIN lookup lt
           ON s.timeType = lt.keyMap
          AND lt.type = 'TIME'
+        LEFT JOIN lookup lat
+          ON s.appointmentTypeId = lat.keyMap
+         AND lat.type = 'APPOINTMENT_TYPE'
         WHERE b.patientId = ?
         ORDER BY b.date DESC, COALESCE(bq.queueNumber, 999999) ASC, CAST(SUBSTRING(s.timeType, 2) AS UNSIGNED) ASC
       `,
@@ -373,7 +420,10 @@ const ListBookingForPatient = async (patientId) => {
 
     status.errCode = 0;
     status.errMessage = "OK";
-    status.data = rows || [];
+    status.data = (rows || []).map((row) => ({
+      ...row,
+      canJoinVideo: canPatientJoinVideoBooking(row),
+    }));
     return status;
   } catch (error) {
     console.log("ListBookingForPatient error:", error);
@@ -396,29 +446,67 @@ const cancelBookAppointment = async (data) => {
 
     const { BookingId } = data;
 
-    const [rows] = await connection.promise().query(
-      `
-        SELECT *
-        FROM booking
-        WHERE id = ? AND statusId <> 'S3' AND statusId <> 'S4'
-      `,
-      [BookingId]
-    );
+    const cancelResult = await withTransaction(async (db) => {
+      const [rows] = await db.query(
+        `
+          SELECT
+            b.id,
+            b.statusId,
+            s.appointmentTypeId,
+            vcs.statusId AS videoSessionStatusId
+          FROM booking b
+          INNER JOIN schedule s
+            ON s.id = b.scheduleId
+          LEFT JOIN video_consultation_session vcs
+            ON vcs.bookingId = b.id
+          WHERE b.id = ?
+            AND b.statusId <> 'S3'
+            AND b.statusId <> 'S4'
+          LIMIT 1
+          FOR UPDATE
+        `,
+        [BookingId]
+      );
 
-    if (rows.length === 0) {
+      if (rows.length === 0) {
+        return { blocked: "notFound" };
+      }
+
+      const booking = rows[0];
+      if (
+        booking.appointmentTypeId === APPOINTMENT_TYPE_ONLINE &&
+        booking.videoSessionStatusId === VIDEO_STATUS_IN_CALL
+      ) {
+        return { blocked: "onlineInCall" };
+      }
+
+      await db.query(
+        `
+          UPDATE booking
+          SET statusId = 'S4'
+          WHERE id = ?
+            AND statusId <> 'S3'
+            AND statusId <> 'S4'
+        `,
+        [BookingId]
+      );
+
+      return { blocked: null };
+    });
+
+    if (cancelResult.blocked === "notFound") {
       status.errCode = 2;
       status.errMessage = "Appointment cannot be canceled or does not exist!";
       return status;
     }
 
-    await connection.promise().query(
-      `
-        UPDATE booking
-        SET statusId = 'S4'
-        WHERE id = ? AND statusId <> 'S3'
-      `,
-      [BookingId]
-    );
+    if (cancelResult.blocked === "onlineInCall") {
+      status.errCode = 3;
+      status.errMessage = "Online appointment cannot be canceled after the video room has started.";
+      return status;
+    }
+
+    await markVideoSessionCancelledForBooking(BookingId);
 
     status.errCode = 0;
     status.errMessage = "Appointment canceled successfully!";
