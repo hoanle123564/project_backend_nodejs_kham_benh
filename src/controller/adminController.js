@@ -5,6 +5,8 @@ const getAdminDashboardStatistics = async (req, res) => {
         const response = await getDashboardStatistics({
             revenueType: req.query.revenueType,
             topDoctorType: req.query.topDoctorType,
+            recentPage: req.query.recentPage,
+            recentLimit: req.query.recentLimit,
         });
 
         return res.status(200).json(response);

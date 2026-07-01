@@ -7,6 +7,19 @@ const parsePriceToNumber = (priceText) => {
     return Number(rawNumber) || 0;
 };
 
+const APPOINTMENT_TYPE = Object.freeze({
+    OFFLINE: "AT1",
+    ONLINE: "AT2",
+});
+
+const OPERATION_STATUS = Object.freeze({
+    PENDING_CONFIRMATION: "pendingConfirmation",
+    WAITING_EXAM: "waitingExam",
+    IN_PROGRESS: "inProgress",
+    COMPLETED: "completed",
+    CANCELLED: "cancelled",
+});
+
 const ensurePriceAtBookingColumn = async () => {
     const [columns] = await connection.promise().query("SHOW COLUMNS FROM booking LIKE 'priceAtBooking'");
 
@@ -15,21 +28,62 @@ const ensurePriceAtBookingColumn = async () => {
     }
 };
 
-const getDoctorPriceAtBooking = async (doctorId) => {
+const normalizePositiveInteger = (value, defaultValue, maxValue) => {
+    const parsedValue = Number.parseInt(value, 10);
+
+    if (!Number.isInteger(parsedValue) || parsedValue <= 0) {
+        return defaultValue;
+    }
+
+    return Math.min(parsedValue, maxValue);
+};
+
+const getOperationalStatus = (bookingStatusId, visitStatusId) => {
+    if (bookingStatusId === "S4") {
+        return OPERATION_STATUS.CANCELLED;
+    }
+
+    if (bookingStatusId === "S1") {
+        return OPERATION_STATUS.PENDING_CONFIRMATION;
+    }
+
+    if (visitStatusId === "VS2") {
+        return OPERATION_STATUS.IN_PROGRESS;
+    }
+
+    if (visitStatusId === "VS3" || bookingStatusId === "S3") {
+        return OPERATION_STATUS.COMPLETED;
+    }
+
+    return OPERATION_STATUS.WAITING_EXAM;
+};
+
+const getDoctorPriceAtBooking = async (doctorId, appointmentTypeId = APPOINTMENT_TYPE.OFFLINE) => {
     const [rows] = await connection.promise().query(
         `
-        SELECT l.value_vi AS priceVi
+        SELECT
+            offlinePrice.value_vi AS offlinePriceVi,
+            onlinePrice.value_vi AS onlinePriceVi
         FROM doctor_info di
-        LEFT JOIN lookup l
-            ON l.keyMap = di.priceId
-           AND l.type = 'PRICE'
+        LEFT JOIN lookup offlinePrice
+            ON offlinePrice.keyMap = di.priceId
+           AND offlinePrice.type = 'PRICE'
+        LEFT JOIN lookup onlinePrice
+            ON onlinePrice.keyMap = di.onlinePriceId
+           AND onlinePrice.type = 'PRICE'
         WHERE di.doctorId = ?
         LIMIT 1
         `,
         [doctorId]
     );
 
-    return parsePriceToNumber(rows[0]?.priceVi);
+    const priceRow = rows[0] || {};
+    const priceText =
+        appointmentTypeId === APPOINTMENT_TYPE.ONLINE
+            ? priceRow.onlinePriceVi
+            : priceRow.offlinePriceVi;
+
+    return parsePriceToNumber(priceText);
 };
 
 const backfillBookingPrices = async () => {
@@ -37,18 +91,28 @@ const backfillBookingPrices = async () => {
 
     const [rows] = await connection.promise().query(
         `
-        SELECT b.id, l.value_vi AS priceVi
+        SELECT
+            b.id,
+            CASE
+                WHEN s.appointmentTypeId = ?
+                THEN onlinePrice.value_vi
+                ELSE offlinePrice.value_vi
+            END AS priceVi
         FROM booking b
         LEFT JOIN schedule s
             ON s.id = b.scheduleId
         LEFT JOIN doctor_info di
             ON di.doctorId = s.doctorId
-        LEFT JOIN lookup l
-            ON l.keyMap = di.priceId
-           AND l.type = 'PRICE'
+        LEFT JOIN lookup offlinePrice
+            ON offlinePrice.keyMap = di.priceId
+           AND offlinePrice.type = 'PRICE'
+        LEFT JOIN lookup onlinePrice
+            ON onlinePrice.keyMap = di.onlinePriceId
+           AND onlinePrice.type = 'PRICE'
         WHERE b.priceAtBooking IS NULL
            OR b.priceAtBooking = 0
-        `
+        `,
+        [APPOINTMENT_TYPE.ONLINE]
     );
 
     for (const row of rows) {
@@ -146,10 +210,12 @@ const getRevenueStatistics = async (revenueType) => {
 
     const [rows] = await connection.promise().query(
         `
-        SELECT b.date, COALESCE(b.priceAtBooking, 0) AS priceAtBooking
-        FROM booking b
-        WHERE b.statusId = 'S3'
-          AND b.date BETWEEN ? AND ?
+        SELECT ev.examDate AS date, COALESCE(b.priceAtBooking, 0) AS priceAtBooking
+        FROM examination_visit ev
+        INNER JOIN booking b
+            ON b.id = ev.bookingId
+        WHERE ev.paymentStatusId = 'PS2'
+          AND ev.examDate BETWEEN ? AND ?
         `,
         [range.startDate.format("YYYY-MM-DD"), range.endDate.format("YYYY-MM-DD")]
     );
@@ -226,13 +292,212 @@ const getDoctorRatioStatistics = async () => {
     };
 };
 
-const getDashboardStatistics = async ({ revenueType, topDoctorType }) => {
+const getTodayOverview = async () => {
+    const today = moment().format("YYYY-MM-DD");
+
+    const [rows] = await connection.promise().query(
+        `
+        SELECT
+            b.statusId AS bookingStatusId,
+            ev.statusId AS visitStatusId
+        FROM booking b
+        LEFT JOIN examination_visit ev
+            ON ev.bookingId = b.id
+        WHERE b.date = ?
+        `,
+        [today]
+    );
+
+    const overview = {
+        date: today,
+        total: rows.length,
+        pendingConfirmation: 0,
+        waitingExam: 0,
+        inProgress: 0,
+        completed: 0,
+        cancelled: 0,
+    };
+
+    rows.forEach((row) => {
+        const statusKey = getOperationalStatus(row.bookingStatusId, row.visitStatusId);
+        overview[statusKey] += 1;
+    });
+
+    return overview;
+};
+
+const getPaymentOverview = async () => {
+    const [rows] = await connection.promise().query(
+        `
+        SELECT
+            COUNT(ev.id) AS totalCount,
+            SUM(COALESCE(b.priceAtBooking, 0)) AS totalAmount,
+            SUM(CASE WHEN ev.paymentStatusId = 'PS2' THEN 1 ELSE 0 END) AS paidCount,
+            SUM(CASE WHEN ev.paymentStatusId = 'PS2' THEN COALESCE(b.priceAtBooking, 0) ELSE 0 END) AS paidAmount,
+            SUM(CASE WHEN COALESCE(ev.paymentStatusId, 'PS1') <> 'PS2' THEN 1 ELSE 0 END) AS unpaidCount,
+            SUM(CASE WHEN COALESCE(ev.paymentStatusId, 'PS1') <> 'PS2' THEN COALESCE(b.priceAtBooking, 0) ELSE 0 END) AS unpaidAmount
+        FROM examination_visit ev
+        INNER JOIN booking b
+            ON b.id = ev.bookingId
+        `
+    );
+
+    const result = rows[0] || {};
+
+    return {
+        totalCount: Number(result.totalCount) || 0,
+        totalAmount: Number(result.totalAmount) || 0,
+        paid: {
+            count: Number(result.paidCount) || 0,
+            amount: Number(result.paidAmount) || 0,
+        },
+        unpaid: {
+            count: Number(result.unpaidCount) || 0,
+            amount: Number(result.unpaidAmount) || 0,
+        },
+    };
+};
+
+const getAppointmentTypeStats = async () => {
+    const defaultStats = {
+        [APPOINTMENT_TYPE.OFFLINE]: {
+            appointmentTypeId: APPOINTMENT_TYPE.OFFLINE,
+            count: 0,
+            revenue: 0,
+        },
+        [APPOINTMENT_TYPE.ONLINE]: {
+            appointmentTypeId: APPOINTMENT_TYPE.ONLINE,
+            count: 0,
+            revenue: 0,
+        },
+    };
+
+    const [rows] = await connection.promise().query(
+        `
+        SELECT
+            COALESCE(s.appointmentTypeId, ?) AS appointmentTypeId,
+            COUNT(b.id) AS count,
+            SUM(COALESCE(b.priceAtBooking, 0)) AS revenue
+        FROM booking b
+        INNER JOIN schedule s
+            ON s.id = b.scheduleId
+        GROUP BY COALESCE(s.appointmentTypeId, ?)
+        `,
+        [APPOINTMENT_TYPE.OFFLINE, APPOINTMENT_TYPE.OFFLINE]
+    );
+
+    rows.forEach((row) => {
+        const appointmentTypeId = row.appointmentTypeId || APPOINTMENT_TYPE.OFFLINE;
+        defaultStats[appointmentTypeId] = {
+            appointmentTypeId,
+            count: Number(row.count) || 0,
+            revenue: Number(row.revenue) || 0,
+        };
+    });
+
+    return {
+        total: Object.values(defaultStats).reduce((sum, item) => sum + item.count, 0),
+        items: [
+            defaultStats[APPOINTMENT_TYPE.OFFLINE],
+            defaultStats[APPOINTMENT_TYPE.ONLINE],
+        ],
+    };
+};
+
+const getRecentBookings = async ({ page, limit }) => {
+    const offset = (page - 1) * limit;
+
+    const [countRows, rows] = await Promise.all([
+        connection.promise().query("SELECT COUNT(*) AS total FROM booking").then(([result]) => result),
+        connection.promise().query(
+            `
+            SELECT
+                b.id AS bookingId,
+                b.createdAt,
+                b.date AS appointmentDate,
+                b.statusId AS bookingStatusId,
+                COALESCE(b.priceAtBooking, 0) AS priceAtBooking,
+                s.appointmentTypeId,
+                lat.value_vi AS appointmentTypeVi,
+                lat.value_en AS appointmentTypeEn,
+                ev.statusId AS visitStatusId,
+                patient.id AS patientId,
+                patient.firstName AS patientFirstName,
+                patient.lastName AS patientLastName,
+                doctor.id AS doctorId,
+                doctor.firstName AS doctorFirstName,
+                doctor.lastName AS doctorLastName
+            FROM booking b
+            INNER JOIN schedule s
+                ON s.id = b.scheduleId
+            INNER JOIN users patient
+                ON patient.id = b.patientId
+            INNER JOIN users doctor
+                ON doctor.id = s.doctorId
+            LEFT JOIN examination_visit ev
+                ON ev.bookingId = b.id
+            LEFT JOIN lookup lat
+                ON lat.keyMap = s.appointmentTypeId
+               AND lat.type = 'APPOINTMENT_TYPE'
+            ORDER BY b.createdAt DESC, b.id DESC
+            LIMIT ? OFFSET ?
+            `,
+            [limit, offset]
+        ).then(([result]) => result),
+    ]);
+
+    const countRow = countRows[0] || {};
+    const total = Number(countRow?.total) || 0;
+    const totalPages = Math.max(1, Math.ceil(total / limit));
+
+    return {
+        items: rows.map((row) => ({
+            bookingId: row.bookingId,
+            createdAt: row.createdAt,
+            appointmentDate: row.appointmentDate,
+            priceAtBooking: Number(row.priceAtBooking) || 0,
+            appointmentTypeId: row.appointmentTypeId || APPOINTMENT_TYPE.OFFLINE,
+            appointmentTypeVi: row.appointmentTypeVi,
+            appointmentTypeEn: row.appointmentTypeEn,
+            bookingStatusId: row.bookingStatusId,
+            visitStatusId: row.visitStatusId,
+            statusKey: getOperationalStatus(row.bookingStatusId, row.visitStatusId),
+            patientId: row.patientId,
+            patientName: `${row.patientFirstName || ""} ${row.patientLastName || ""}`.trim() || "Unknown patient",
+            doctorId: row.doctorId,
+            doctorName: `${row.doctorFirstName || ""} ${row.doctorLastName || ""}`.trim() || "Unknown doctor",
+        })),
+        pagination: {
+            page,
+            limit,
+            total,
+            totalPages,
+        },
+    };
+};
+
+const getDashboardStatistics = async ({ revenueType, topDoctorType, recentPage, recentLimit }) => {
     await backfillBookingPrices();
 
-    const [revenue, topDoctors, doctorRatio] = await Promise.all([
+    const page = normalizePositiveInteger(recentPage, 1, Number.MAX_SAFE_INTEGER);
+    const limit = normalizePositiveInteger(recentLimit, 5, 5);
+
+    const [
+        revenue,
+        topDoctors,
+        doctorRatio,
+        todayOverview,
+        paymentOverview,
+        appointmentTypeStats,
+        recentBookings,
+    ] = await Promise.all([
         getRevenueStatistics(revenueType),
         getTopDoctorStatistics(topDoctorType),
         getDoctorRatioStatistics(),
+        getTodayOverview(),
+        getPaymentOverview(),
+        getAppointmentTypeStats(),
+        getRecentBookings({ page, limit }),
     ]);
 
     return {
@@ -242,11 +507,16 @@ const getDashboardStatistics = async ({ revenueType, topDoctorType }) => {
             revenue,
             topDoctors,
             doctorRatio,
+            todayOverview,
+            paymentOverview,
+            appointmentTypeStats,
+            recentBookings,
         },
     };
 };
 
 module.exports = {
+    getOperationalStatus,
     parsePriceToNumber,
     ensurePriceAtBookingColumn,
     getDoctorPriceAtBooking,
