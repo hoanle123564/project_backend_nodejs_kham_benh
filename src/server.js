@@ -7,7 +7,41 @@ require('dotenv').config()
 
 let app = express()
 
-app.use(cors({ origin: 'http://localhost:3000', credentials: true }));
+const parseOriginList = (value = '') =>
+    value
+        .split(',')
+        .map(origin => origin.trim())
+        .filter(Boolean)
+
+const configuredOrigins = new Set([
+    'http://localhost:3000',
+    'http://192.168.101.4:3000',
+    ...parseOriginList(process.env.URL_REACT),
+    ...parseOriginList(process.env.CORS_ORIGINS),
+])
+
+const privateNetworkOriginPattern =
+    /^https?:\/\/(localhost|127\.0\.0\.1|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3})(:\d+)?$/
+
+const isAllowedCorsOrigin = (origin) => {
+    if (!origin || configuredOrigins.has(origin)) {
+        return true
+    }
+
+    return process.env.NODE_ENV !== 'production' && privateNetworkOriginPattern.test(origin)
+}
+
+app.use(cors({
+    origin: (origin, callback) => {
+        if (isAllowedCorsOrigin(origin)) {
+            callback(null, true)
+            return
+        }
+
+        callback(new Error(`CORS blocked origin: ${origin}`))
+    },
+    credentials: true,
+}));
 
 
 app.use(express.json({ limit: "10mb" }));
