@@ -1,19 +1,20 @@
 CREATE DATABASE IF NOT EXISTS kham_benh_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 USE kham_benh_db;
+SET time_zone = '+07:00';
 
 -- =====================================================
 -- BẢNG 1: LOOKUP (Bảng tra cứu)
--- Lưu các giá trị: GENDER, POSITION, PRICE, PAYMENT, TIME, STATUS, PROVINCE
+-- Lưu các giá trị: GENDER, POSITION, PRICE, PAYMENT, TIME, STATUS, APPOINTMENT_TYPE, VIDEO_SESSION_STATUS, PROVINCE
 -- =====================================================
 CREATE TABLE IF NOT EXISTS `lookup` (
     `id` INT AUTO_INCREMENT PRIMARY KEY,
     `keyMap` VARCHAR(50) NOT NULL,
-    `type` VARCHAR(50) NOT NULL COMMENT 'GENDER, POSITION, PRICE, PAYMENT, TIME, STATUS, PROVINCE, DISTRICT, WARD, CLINIC_TYPE',
+    `type` VARCHAR(50) NOT NULL COMMENT 'GENDER, POSITION, PRICE, PAYMENT, TIME, STATUS, APPOINTMENT_TYPE, VIDEO_SESSION_STATUS, PROVINCE, DISTRICT, WARD, CLINIC_TYPE',
     `parentKeyMap` VARCHAR(50) DEFAULT NULL COMMENT 'Hierarchical lookup parent: DISTRICT -> PROVINCE, WARD -> DISTRICT',
     `value_vi` VARCHAR(255) DEFAULT NULL,
     `value_en` VARCHAR(255) DEFAULT NULL,
-    `createdAt` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    `updatedAt` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    `createdAt` DATETIME DEFAULT CURRENT_TIMESTAMP,
+    `updatedAt` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     INDEX `idx_keyMap` (`keyMap`),
     INDEX `idx_type` (`type`),
     INDEX `idx_lookup_type_parent` (`type`, `parentKeyMap`),
@@ -39,8 +40,8 @@ CREATE TABLE IF NOT EXISTS `users` (
     `phoneNumber` VARCHAR(20) DEFAULT NULL,
     `positionId` VARCHAR(10) DEFAULT NULL COMMENT 'Tham chiếu lookup.keyMap với type=POSITION',
     `image` LONGTEXT DEFAULT NULL,
-    `createdAt` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    `updatedAt` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    `createdAt` DATETIME DEFAULT CURRENT_TIMESTAMP,
+    `updatedAt` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     UNIQUE KEY `unique_email` (`email`),
     INDEX `idx_roleId` (`roleId`),
     INDEX `idx_email` (`email`),
@@ -57,8 +58,8 @@ CREATE TABLE IF NOT EXISTS `specialty` (
   `image` longtext COLLATE utf8mb4_unicode_ci COMMENT 'Base64 image',
   `descriptionHTML` text COLLATE utf8mb4_unicode_ci,
   `descriptionMarkdown` text COLLATE utf8mb4_unicode_ci,
-  `createdAt` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
-  `updatedAt` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `createdAt` datetime NULL DEFAULT CURRENT_TIMESTAMP,
+  `updatedAt` datetime NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `isActive` tinyint(1) DEFAULT '1',
   `displayOrder` int DEFAULT '0',
   PRIMARY KEY (`id`),
@@ -84,8 +85,8 @@ CREATE TABLE IF NOT EXISTS `clinic` (
   `image` longtext COLLATE utf8mb4_unicode_ci,
   `descriptionHTML` text COLLATE utf8mb4_unicode_ci,
   `descriptionMarkdown` text COLLATE utf8mb4_unicode_ci,
-  `createdAt` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
-  `updatedAt` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `createdAt` datetime NULL DEFAULT CURRENT_TIMESTAMP,
+  `updatedAt` datetime NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `isActive` tinyint(1) DEFAULT '1',
   `displayOrder` int DEFAULT '0',
   PRIMARY KEY (`id`),
@@ -105,8 +106,8 @@ CREATE TABLE IF NOT EXISTS `clinic_department` (
   `specialtyId` int NOT NULL,
   `description` text COLLATE utf8mb4_unicode_ci,
   `isActive` tinyint(1) DEFAULT '1',
-  `createdAt` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
-  `updatedAt` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `createdAt` datetime NULL DEFAULT CURRENT_TIMESTAMP,
+  `updatedAt` datetime NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   UNIQUE KEY `unique_clinic_department_specialty` (`clinicId`, `specialtyId`),
   KEY `idx_clinic_department_clinic` (`clinicId`),
@@ -130,11 +131,12 @@ CREATE TABLE IF NOT EXISTS `doctor_info` (
   `isActive` int DEFAULT '1',
   `displayOrder` int DEFAULT '0',
   `priceId` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'Tham chiếu lookup.keyMap với type=PRICE',
+  `onlinePriceId` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'Tham chiếu lookup.keyMap với type=PRICE cho tư vấn online',
   `paymentId` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'Tham chiếu lookup.keyMap với type=PAYMENT',
   `specialtyId` int DEFAULT NULL COMMENT 'FK to specialty.id',
   `clinicId` int DEFAULT NULL COMMENT 'FK to clinic.id',
-  `createdAt` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
-  `updatedAt` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `createdAt` datetime NULL DEFAULT CURRENT_TIMESTAMP,
+  `updatedAt` datetime NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   UNIQUE KEY `unique_doctorId` (`doctorId`),
   UNIQUE KEY `unique_doctor_info_slug` (`slug`),
@@ -154,14 +156,16 @@ CREATE TABLE IF NOT EXISTS `schedule` (
   `doctorId` int NOT NULL COMMENT 'FK to users.id',
   `date` date NOT NULL,
   `timeType` varchar(10) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT 'Tham chiếu lookup.keyMap với type=TIME (T1-T8)',
+  `appointmentTypeId` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT 'AT1' COMMENT 'AT1=Kham tai phong kham, AT2=Kham online/video',
   `maxNumber` int DEFAULT '10' COMMENT 'Số lượng bệnh nhân tối đa',
-  `createdAt` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
-  `updatedAt` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `createdAt` datetime NULL DEFAULT CURRENT_TIMESTAMP,
+  `updatedAt` datetime NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   UNIQUE KEY `unique_schedule` (`doctorId`,`date`,`timeType`),
   KEY `idx_doctorId` (`doctorId`),
   KEY `idx_date` (`date`),
   KEY `idx_doctorId_date` (`doctorId`,`date`),
+  KEY `idx_schedule_appointment_type` (`appointmentTypeId`),
   CONSTRAINT `fk_schedule_doctor` FOREIGN KEY (`doctorId`) REFERENCES `users` (`id`) ON DELETE CASCADE ON UPDATE CASCADE
 ) ENGINE=InnoDB;
 
@@ -179,8 +183,8 @@ CREATE TABLE IF NOT EXISTS `booking` (
   `token` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'Token xác nhận email',
   `priceAtBooking` int DEFAULT '0',
   `paymentMethodId` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'Phương thức thanh toán bệnh nhân chọn lúc đặt lịch',
-  `createdAt` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
-  `updatedAt` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `createdAt` datetime NULL DEFAULT CURRENT_TIMESTAMP,
+  `updatedAt` datetime NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   KEY `idx_patientId` (`patientId`),
   KEY `idx_date` (`date`),
@@ -201,8 +205,8 @@ CREATE TABLE IF NOT EXISTS `booking_queue_sequence` (
   `doctorId` int NOT NULL,
   `appointmentDate` date NOT NULL,
   `currentNumber` int NOT NULL DEFAULT '0',
-  `createdAt` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
-  `updatedAt` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `createdAt` datetime NULL DEFAULT CURRENT_TIMESTAMP,
+  `updatedAt` datetime NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`doctorId`,`appointmentDate`),
   CONSTRAINT `fk_booking_queue_sequence_doctor` FOREIGN KEY (`doctorId`) REFERENCES `users` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE
 ) ENGINE=InnoDB;
@@ -217,8 +221,8 @@ CREATE TABLE IF NOT EXISTS `booking_queue` (
   `doctorId` int NOT NULL,
   `appointmentDate` date NOT NULL,
   `queueNumber` int NOT NULL,
-  `createdAt` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
-  `updatedAt` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `createdAt` datetime NULL DEFAULT CURRENT_TIMESTAMP,
+  `updatedAt` datetime NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   UNIQUE KEY `unique_booking_queue_booking` (`bookingId`),
   UNIQUE KEY `unique_booking_queue_scope` (`doctorId`,`appointmentDate`,`queueNumber`),
@@ -242,11 +246,11 @@ CREATE TABLE IF NOT EXISTS `examination_visit` (
   `statusId` varchar(10) COLLATE utf8mb4_unicode_ci DEFAULT 'VS1' COMMENT 'VS1=Chờ khám, VS2=Đang khám, VS3=Đã khám xong',
   `paymentStatusId` varchar(10) COLLATE utf8mb4_unicode_ci DEFAULT 'PS1' COMMENT 'PS1=Chưa thanh toán, PS2=Đã thanh toán',
   `paymentMethodId` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'Tham chiếu lookup.keyMap với type=PAYMENT',
-  `startedAt` timestamp NULL DEFAULT NULL,
-  `completedAt` timestamp NULL DEFAULT NULL,
+  `startedAt` datetime NULL DEFAULT NULL,
+  `completedAt` datetime NULL DEFAULT NULL,
   `note` text COLLATE utf8mb4_unicode_ci,
-  `createdAt` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
-  `updatedAt` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `createdAt` datetime NULL DEFAULT CURRENT_TIMESTAMP,
+  `updatedAt` datetime NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   UNIQUE KEY `unique_examination_visit_booking` (`bookingId`),
   UNIQUE KEY `unique_doctor_exam_queue` (`doctorId`,`examDate`,`queueNumber`),
@@ -257,6 +261,28 @@ CREATE TABLE IF NOT EXISTS `examination_visit` (
   CONSTRAINT `fk_examination_visit_booking` FOREIGN KEY (`bookingId`) REFERENCES `booking` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE,
   CONSTRAINT `fk_examination_visit_patient` FOREIGN KEY (`patientId`) REFERENCES `users` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE,
   CONSTRAINT `fk_examination_visit_doctor` FOREIGN KEY (`doctorId`) REFERENCES `users` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE
+) ENGINE=InnoDB;
+
+-- =====================================================
+-- BANG 9A: VIDEO_CONSULTATION_SESSION (Phien kham online)
+-- =====================================================
+CREATE TABLE IF NOT EXISTS `video_consultation_session` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `bookingId` int NOT NULL,
+  `examinationVisitId` int DEFAULT NULL,
+  `roomId` varchar(100) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `statusId` varchar(20) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'VCS1' COMMENT 'VCS1=Chua mo, VCS2=Dang goi, VCS3=Da ket thuc, VCS4=Huy/loi',
+  `startedAt` datetime NULL DEFAULT NULL,
+  `endedAt` datetime NULL DEFAULT NULL,
+  `createdAt` datetime NULL DEFAULT CURRENT_TIMESTAMP,
+  `updatedAt` datetime NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `unique_video_session_booking` (`bookingId`),
+  UNIQUE KEY `unique_video_session_room` (`roomId`),
+  KEY `idx_video_session_visit` (`examinationVisitId`),
+  KEY `idx_video_session_status` (`statusId`),
+  CONSTRAINT `fk_video_session_booking` FOREIGN KEY (`bookingId`) REFERENCES `booking` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE,
+  CONSTRAINT `fk_video_session_visit` FOREIGN KEY (`examinationVisitId`) REFERENCES `examination_visit` (`id`) ON DELETE SET NULL ON UPDATE CASCADE
 ) ENGINE=InnoDB;
 
 -- =====================================================
@@ -273,8 +299,8 @@ CREATE TABLE IF NOT EXISTS `patient_profile` (
   `ethnicityId` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'Logical reference to lookup.keyMap with type=ETHNICITY',
   `occupation` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `healthInsuranceCode` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `createdAt` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
-  `updatedAt` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `createdAt` datetime NULL DEFAULT CURRENT_TIMESTAMP,
+  `updatedAt` datetime NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   UNIQUE KEY `unique_patient_profile_patient` (`patientId`),
   UNIQUE KEY `unique_patient_profile_code` (`medicalCode`),
@@ -305,9 +331,9 @@ CREATE TABLE IF NOT EXISTS `medical_record` (
   `generalNote` text COLLATE utf8mb4_unicode_ci,
   `followUpDate` date DEFAULT NULL,
   `statusId` varchar(10) COLLATE utf8mb4_unicode_ci DEFAULT 'MR1' COMMENT 'MR1=Open draft, MR2=Closed record',
-  `closedAt` timestamp NULL DEFAULT NULL,
-  `createdAt` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
-  `updatedAt` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `closedAt` datetime NULL DEFAULT NULL,
+  `createdAt` datetime NULL DEFAULT CURRENT_TIMESTAMP,
+  `updatedAt` datetime NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   UNIQUE KEY `unique_medical_record_booking` (`bookingId`),
   UNIQUE KEY `unique_medical_record_visit` (`examinationVisitId`),
@@ -332,8 +358,8 @@ CREATE TABLE IF NOT EXISTS `paraclinical_result` (
   `name` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
   `resultSummary` text COLLATE utf8mb4_unicode_ci,
   `note` text COLLATE utf8mb4_unicode_ci,
-  `createdAt` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
-  `updatedAt` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `createdAt` datetime NULL DEFAULT CURRENT_TIMESTAMP,
+  `updatedAt` datetime NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   KEY `idx_paraclinical_record` (`medicalRecordId`),
   CONSTRAINT `fk_paraclinical_record` FOREIGN KEY (`medicalRecordId`) REFERENCES `medical_record` (`id`) ON DELETE CASCADE ON UPDATE CASCADE
@@ -349,8 +375,8 @@ CREATE TABLE IF NOT EXISTS `prescription` (
   `doctorId` int NOT NULL,
   `prescriptionCode` varchar(50) COLLATE utf8mb4_unicode_ci NOT NULL,
   `note` text COLLATE utf8mb4_unicode_ci,
-  `createdAt` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
-  `updatedAt` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `createdAt` datetime NULL DEFAULT CURRENT_TIMESTAMP,
+  `updatedAt` datetime NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   UNIQUE KEY `unique_prescription_record` (`medicalRecordId`),
   UNIQUE KEY `unique_prescription_code` (`prescriptionCode`),
@@ -376,8 +402,8 @@ CREATE TABLE IF NOT EXISTS `prescription_item` (
   `eveningQty` decimal(5,2) DEFAULT '0.00',
   `totalQuantity` decimal(10,2) DEFAULT '0.00',
   `instruction` text COLLATE utf8mb4_unicode_ci,
-  `createdAt` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
-  `updatedAt` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `createdAt` datetime NULL DEFAULT CURRENT_TIMESTAMP,
+  `updatedAt` datetime NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   KEY `idx_prescription_item_prescription` (`prescriptionId`),
   CONSTRAINT `fk_prescription_item_prescription` FOREIGN KEY (`prescriptionId`) REFERENCES `prescription` (`id`) ON DELETE CASCADE ON UPDATE CASCADE
@@ -394,8 +420,8 @@ CREATE TABLE IF NOT EXISTS `post` (
   `bannerImage` longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci COMMENT 'Ảnh banner bên trong bài viết',
   `isActive` tinyint(1) DEFAULT '1' COMMENT '1=Hiển thị, 0=Tắt',
   `displayOrder` int DEFAULT '0' COMMENT 'Số thứ tự hiển thị',
-  `createdAt` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
-  `updatedAt` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `createdAt` datetime NULL DEFAULT CURRENT_TIMESTAMP,
+  `updatedAt` datetime NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   UNIQUE KEY `unique_post_slug` (`slug`),
   KEY `idx_post_title` (`title`),
@@ -417,8 +443,8 @@ CREATE TABLE IF NOT EXISTS `post_category` (
   `slug` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL COMMENT 'Slug danh mục bài viết',
   `displayOrder` int DEFAULT '0' COMMENT 'Số thứ tự hiển thị',
   `isActive` int DEFAULT '1' COMMENT '1=Hiển thị, 0=Tắt',
-  `createdAt` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
-  `updatedAt` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `createdAt` datetime NULL DEFAULT CURRENT_TIMESTAMP,
+  `updatedAt` datetime NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   UNIQUE KEY `unique_post_category_slug` (`slug`),
   KEY `idx_post_category_name` (`name`),
@@ -434,8 +460,8 @@ CREATE TABLE IF NOT EXISTS `post_category` (
 CREATE TABLE IF NOT EXISTS `post_category_detail` (
   `postId` int NOT NULL,
   `postCategoryId` int NOT NULL,
-  `createdAt` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
-  `updatedAt` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `createdAt` datetime NULL DEFAULT CURRENT_TIMESTAMP,
+  `updatedAt` datetime NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`postId`,`postCategoryId`),
   KEY `idx_post_category_detail_postCategoryId` (`postCategoryId`),
   CONSTRAINT `fk_post_category_detail_category` FOREIGN KEY (`postCategoryId`) REFERENCES `post_category` (`id`) ON DELETE CASCADE ON UPDATE CASCADE,
@@ -525,7 +551,21 @@ INSERT IGNORE INTO `lookup` (`keyMap`, `type`, `value_vi`, `value_en`) VALUES
 ('T17', 'TIME', '16:00 - 16:30', '4:00 PM - 4:30 PM'),
 ('T18', 'TIME', '16:30 - 17:00', '4:30 PM - 5:00 PM'),
 ('T19', 'TIME', '17:00 - 17:30', '5:00 PM - 5:30 PM'),
-('T20', 'TIME', '17:30 - 18:00', '5:30 PM - 6:00 PM');
+('T20', 'TIME', '17:30 - 18:00', '5:30 PM - 6:00 PM'),
+-- Tối
+('T21', 'TIME', '18:00 - 18:30', '6:00 PM - 6:30 PM'),
+('T22', 'TIME', '18:30 - 19:00', '6:30 PM - 7:00 PM'),
+('T23', 'TIME', '19:00 - 19:30', '7:00 PM - 7:30 PM'),
+('T24', 'TIME', '19:30 - 20:00', '7:30 PM - 8:00 PM'),
+('T25', 'TIME', '20:00 - 20:30', '8:00 PM - 8:30 PM'),
+('T26', 'TIME', '20:30 - 21:00', '8:30 PM - 9:00 PM'),
+('T27', 'TIME', '21:00 - 21:30', '9:00 PM - 9:30 PM'),
+('T28', 'TIME', '21:30 - 22:00', '9:30 PM - 10:00 PM');
+
+-- APPOINTMENT_TYPE (Hinh thuc kham)
+INSERT IGNORE INTO `lookup` (`keyMap`, `type`, `value_vi`, `value_en`) VALUES
+('AT1', 'APPOINTMENT_TYPE', 'Kham tai phong kham', 'In-person visit'),
+('AT2', 'APPOINTMENT_TYPE', 'Kham online/video', 'Online video visit');
 
 -- STATUS (Trạng thái đặt lịch)
 INSERT IGNORE INTO `lookup` (`keyMap`, `type`, `value_vi`, `value_en`) VALUES
@@ -539,6 +579,13 @@ INSERT IGNORE INTO `lookup` (`keyMap`, `type`, `value_vi`, `value_en`) VALUES
 ('VS1', 'VISIT_STATUS', 'Chờ khám', 'Waiting'),
 ('VS2', 'VISIT_STATUS', 'Đang khám', 'In progress'),
 ('VS3', 'VISIT_STATUS', 'Đã khám xong', 'Completed');
+
+-- VIDEO_SESSION_STATUS (Trang thai phien kham online)
+INSERT IGNORE INTO `lookup` (`keyMap`, `type`, `value_vi`, `value_en`) VALUES
+('VCS1', 'VIDEO_SESSION_STATUS', 'Chua mo', 'Not opened'),
+('VCS2', 'VIDEO_SESSION_STATUS', 'Dang goi', 'In call'),
+('VCS3', 'VIDEO_SESSION_STATUS', 'Da ket thuc', 'Ended'),
+('VCS4', 'VIDEO_SESSION_STATUS', 'Huy/loi', 'Cancelled/error');
 
 -- PAYMENT_STATUS (Trạng thái thanh toán)
 INSERT IGNORE INTO `lookup` (`keyMap`, `type`, `value_vi`, `value_en`) VALUES
