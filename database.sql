@@ -233,8 +233,32 @@ CREATE TABLE IF NOT EXISTS `booking_queue` (
 ) ENGINE=InnoDB;
 
 -- =====================================================
--- BẢNG 9: EXAMINATION_VISIT (Lượt khám trong ngày)
--- Quản lý STT khám theo từng bác sĩ/ngày, trạng thái khám và thanh toán
+-- BANG 8C: CHAT_SESSIONS (Trang thai hoi thoai chatbot)
+-- Luu state machine chatbot, khong luu tung tin nhan trong phase nay.
+-- =====================================================
+CREATE TABLE IF NOT EXISTS `chat_sessions` (
+  `id` INT AUTO_INCREMENT PRIMARY KEY,
+  `sessionId` VARCHAR(100) NOT NULL,
+  `patientId` INT NULL,
+  `state` VARCHAR(50) NOT NULL,
+  `collectedInfo` JSON NOT NULL,
+  `selectedDoctorId` INT NULL,
+  `selectedScheduleId` INT NULL,
+  `bookingId` INT NULL,
+  `lastAiResult` JSON NULL,
+  `createdAt` DATETIME DEFAULT CURRENT_TIMESTAMP,
+  `updatedAt` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `expiresAt` DATETIME NULL,
+  UNIQUE KEY `unique_chat_session_id` (`sessionId`),
+  KEY `idx_chat_sessions_patient` (`patientId`),
+  KEY `idx_chat_sessions_state` (`state`),
+  CONSTRAINT `fk_chat_session_patient` FOREIGN KEY (`patientId`) REFERENCES `users` (`id`) ON DELETE SET NULL,
+  CONSTRAINT `fk_chat_session_booking` FOREIGN KEY (`bookingId`) REFERENCES `booking` (`id`) ON DELETE SET NULL
+) ENGINE=InnoDB;
+
+-- =====================================================
+-- BANG 9: EXAMINATION_VISIT (Luot kham trong ngay)
+-- Quan ly STT kham theo tung bac si/ngay, trang thai kham va thanh toan
 -- =====================================================
 CREATE TABLE IF NOT EXISTS `examination_visit` (
   `id` int NOT NULL AUTO_INCREMENT,
