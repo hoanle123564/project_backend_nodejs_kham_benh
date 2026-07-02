@@ -43,6 +43,44 @@ const getScheduleMeta = async (scheduleId) => {
   return rows[0] || null;
 };
 
+// Khóa lịch trong transaction rồi kiểm tra số booking chưa hủy để tránh vượt maxNumber.
+const getScheduleCapacityInCurrentTransaction = async (scheduleId, db) => {
+  const [scheduleRows] = await db.query(
+    `
+      SELECT id, maxNumber
+      FROM schedule
+      WHERE id = ?
+      LIMIT 1
+      FOR UPDATE
+    `,
+    [scheduleId]
+  );
+
+  if (scheduleRows.length === 0) {
+    return null;
+  }
+
+  const maxNumber = Number(scheduleRows[0].maxNumber) > 0
+    ? Number(scheduleRows[0].maxNumber)
+    : 1;
+  const [bookingRows] = await db.query(
+    `
+      SELECT COUNT(*) AS bookedCount
+      FROM booking
+      WHERE scheduleId = ?
+        AND statusId <> 'S4'
+    `,
+    [scheduleId]
+  );
+  const bookedCount = Number(bookingRows[0]?.bookedCount) || 0;
+
+  return {
+    maxNumber,
+    bookedCount,
+    remaining: Math.max(maxNumber - bookedCount, 0),
+  };
+};
+
 // Xác định patientId: dùng id đăng nhập nếu có, nếu không thì tìm/tạo user bệnh nhân theo email.
 const resolvePatientId = async ({
   patientId,
@@ -132,6 +170,15 @@ const bookAppointment = async (data) => {
 
     // Gói tạo/cập nhật bệnh nhân, chống đặt trùng và cấp queue trong một transaction.
     const bookingResult = await withTransaction(async (db) => {
+      const capacity = await getScheduleCapacityInCurrentTransaction(scheduleId, db);
+      if (!capacity) {
+        return { missingSchedule: true };
+      }
+
+      if (capacity.remaining <= 0) {
+        return { full: true };
+      }
+
       const realPatientId = await resolvePatientId({
         patientId,
         email,
@@ -191,6 +238,20 @@ const bookAppointment = async (data) => {
         queue: queue.data,
       };
     });
+
+    if (bookingResult.missingSchedule) {
+      return {
+        errCode: 3,
+        errMessage: "Selected schedule does not exist",
+      };
+    }
+
+    if (bookingResult.full) {
+      return {
+        errCode: 4,
+        errMessage: "Selected schedule is full.",
+      };
+    }
 
     if (bookingResult.duplicate) {
       return {
