@@ -77,6 +77,7 @@ const {
   postJoinToken,
   postMarkStarted,
 } = require("../controller/videoConsultationController");
+const { postChatMessage } = require("../controller/chatController");
 
 // specialty controller
 const {
@@ -193,6 +194,9 @@ router.post("/api/cancel-book-appointment", authMiddleware, postCancelBookAppoin
 // video consultation routes
 router.post("/api/video-consultation/join-token", authMiddleware, postJoinToken);
 router.post("/api/video-consultation/mark-started", authMiddleware, postMarkStarted);
+
+// chatbot route
+router.post("/api/chat/message", postChatMessage);
 
 
 // specialty routes
