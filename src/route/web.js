@@ -33,6 +33,7 @@ const {
   GetcheScheduleDoctor,
   getListPatientForDoctor,
   postSendRemedy,
+  handleUpdateScheduleDoctor,
   handleDeleteScheduleDoctor,
   getListAppointmentForDoctor,
   getListBooking,
@@ -77,7 +78,12 @@ const {
   postJoinToken,
   postMarkStarted,
 } = require("../controller/videoConsultationController");
-const { postChatMessage } = require("../controller/chatController");
+const {
+  getChatSessionList,
+  postChatSession,
+  getChatSessionMessages,
+  postChatMessage,
+} = require("../controller/chatController");
 
 // specialty controller
 const {
@@ -153,6 +159,7 @@ router.get("/api/detail-doctor", getDetailDoctor);
 router.post("/api/save-doctor", authMiddleware, postInfoDoctor);
 router.post("/api/create-schedule-doctor", authMiddleware, CreateScheduleDoctor);
 router.get("/api/get-schedule-doctor", GetcheScheduleDoctor);
+router.put("/api/update-schedule-doctor", authMiddleware, handleUpdateScheduleDoctor);
 router.get("/api/get-list-patient-for-doctor", authMiddleware, getListPatientForDoctor);
 router.get("/api/doctor/patients", authMiddleware, getDoctorPatients);
 router.get("/api/doctor/patient-detail", authMiddleware, getDoctorPatientDetailApi);
@@ -196,7 +203,10 @@ router.post("/api/video-consultation/join-token", authMiddleware, postJoinToken)
 router.post("/api/video-consultation/mark-started", authMiddleware, postMarkStarted);
 
 // chatbot route
-router.post("/api/chat/message", postChatMessage);
+router.get("/api/chat/sessions", authMiddleware, getChatSessionList);
+router.post("/api/chat/sessions", authMiddleware, postChatSession);
+router.get("/api/chat/sessions/:sessionId/messages", authMiddleware, getChatSessionMessages);
+router.post("/api/chat/message", authMiddleware, postChatMessage);
 
 
 // specialty routes

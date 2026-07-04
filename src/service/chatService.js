@@ -22,6 +22,8 @@ const STATES = Object.freeze({
 const ACTIONABLE_INTENTS = new Set(["FIND_DOCTOR", "BOOK_APPOINTMENT"]);
 const APPOINTMENT_TYPE = Object.freeze({ OFFLINE: "AT1", ONLINE: "AT2" });
 const ACTIVE_BOOKING_STATUSES = ["S1", "S2", "S3"];
+const DEFAULT_SESSION_TITLE = "Cuộc trò chuyện mới";
+const SESSION_ACCESS_ERROR = "Không tìm thấy cuộc trò chuyện hoặc bạn không có quyền truy cập.";
 
 const SPECIALTY_CODE_TO_NAMES = Object.freeze({
   CO_XUONG_KHOP: ["Cơ xương khớp", "Co xuong khop", "Cơ Xương Khớp"],
@@ -73,6 +75,21 @@ const parseJson = (value, fallback) => {
   } catch (error) {
     return fallback;
   }
+};
+
+const createChatError = (statusCode, message) =>
+  Object.assign(new Error(message), { statusCode });
+
+const requirePatientId = (patientId) => {
+  if (!patientId) {
+    throw createChatError(401, "Vui lòng đăng nhập tài khoản bệnh nhân để dùng chatbot.");
+  }
+};
+
+const buildSessionTitle = (message) => {
+  const title = String(message || "").replace(/\s+/g, " ").trim();
+  if (!title) return DEFAULT_SESSION_TITLE;
+  return title.length > 60 ? `${title.slice(0, 57)}...` : title;
 };
 
 const normalizeText = (value) =>
@@ -193,12 +210,15 @@ const rowToSession = (row) => {
     id: row.id,
     sessionId: row.sessionId,
     patientId: row.patientId || null,
+    title: row.title || DEFAULT_SESSION_TITLE,
     state: row.state || STATES.START,
     collectedInfo,
     selectedDoctorId: row.selectedDoctorId || null,
     selectedScheduleId: row.selectedScheduleId || null,
     bookingId: row.bookingId || null,
     lastAiResult: parseJson(row.lastAiResult, null),
+    createdAt: row.createdAt || null,
+    updatedAt: row.updatedAt || null,
     expiresAt: row.expiresAt || null,
   };
 };
@@ -206,6 +226,7 @@ const rowToSession = (row) => {
 const createSessionObject = (sessionId, patientId) => ({
   sessionId: sessionId || uuidv4(),
   patientId: patientId || null,
+  title: DEFAULT_SESSION_TITLE,
   state: STATES.START,
   collectedInfo: defaultCollectedInfo(),
   selectedDoctorId: null,
@@ -215,8 +236,23 @@ const createSessionObject = (sessionId, patientId) => ({
   expiresAt: null,
 });
 
-const getOrCreateSession = async (sessionId, patientId) => {
-  const normalizedSessionId = String(sessionId || "").trim() || uuidv4();
+const sessionListItem = (session) => ({
+  sessionId: session.sessionId,
+  session_id: session.sessionId,
+  title: session.title || DEFAULT_SESSION_TITLE,
+  state: session.state || STATES.START,
+  createdAt: session.createdAt || null,
+  updatedAt: session.updatedAt || null,
+});
+
+const getOwnedSession = async (sessionId, patientId) => {
+  requirePatientId(patientId);
+
+  const normalizedSessionId = String(sessionId || "").trim();
+  if (!normalizedSessionId) {
+    throw createChatError(400, "Thiếu sessionId cuộc trò chuyện.");
+  }
+
   const [rows] = await connection.promise().query(
     `
       SELECT *
@@ -227,37 +263,102 @@ const getOrCreateSession = async (sessionId, patientId) => {
     [normalizedSessionId]
   );
 
-  if (rows.length > 0) {
-    const session = rowToSession(rows[0]);
-    if (patientId && !session.patientId) {
-      session.patientId = patientId;
-    }
-    return session;
+  if (!rows.length || Number(rows[0].patientId) !== Number(patientId)) {
+    throw createChatError(404, SESSION_ACCESS_ERROR);
   }
 
-  const session = createSessionObject(normalizedSessionId, patientId);
+  return rowToSession(rows[0]);
+};
+
+const createChatSession = async (patientId) => {
+  requirePatientId(patientId);
+
+  const session = createSessionObject(uuidv4(), patientId);
   await connection.promise().query(
     `
       INSERT INTO chat_sessions
-        (sessionId, patientId, state, collectedInfo)
-      VALUES (?, ?, ?, ?)
+        (sessionId, patientId, title, state, collectedInfo)
+      VALUES (?, ?, ?, ?, ?)
     `,
     [
       session.sessionId,
       session.patientId,
+      session.title,
       session.state,
       JSON.stringify(session.collectedInfo),
     ]
   );
 
-  return session;
+  const [rows] = await connection.promise().query(
+    `
+      SELECT *
+      FROM chat_sessions
+      WHERE sessionId = ?
+      LIMIT 1
+    `,
+    [session.sessionId]
+  );
+
+  return sessionListItem(rowToSession(rows[0]));
+};
+
+const getOrCreateSession = async (sessionId, patientId) => {
+  if (sessionId) return getOwnedSession(sessionId, patientId);
+  const created = await createChatSession(patientId);
+  return getOwnedSession(created.sessionId, patientId);
+};
+
+const getChatSessions = async (patientId) => {
+  requirePatientId(patientId);
+
+  const [rows] = await connection.promise().query(
+    `
+      SELECT sessionId,
+             COALESCE(NULLIF(title, ''), ?) AS title,
+             state,
+             createdAt,
+             updatedAt
+      FROM chat_sessions
+      WHERE patientId = ?
+      ORDER BY updatedAt DESC, id DESC
+      LIMIT 50
+    `,
+    [DEFAULT_SESSION_TITLE, patientId]
+  );
+
+  return rows.map(sessionListItem);
+};
+
+const getChatMessages = async (patientId, sessionId) => {
+  const session = await getOwnedSession(sessionId, patientId);
+  const [rows] = await connection.promise().query(
+    `
+      SELECT id, role, message, state, data, createdAt, updatedAt
+      FROM chat_messages
+      WHERE chatSessionId = ?
+      ORDER BY createdAt ASC, id ASC
+    `,
+    [session.id]
+  );
+
+  return rows.map((row) => ({
+    id: row.id,
+    role: row.role,
+    text: row.message,
+    message: row.message,
+    state: row.state || null,
+    data: parseJson(row.data, null),
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  }));
 };
 
 const saveSession = async (session) => {
   await connection.promise().query(
     `
       UPDATE chat_sessions
-      SET patientId = ?,
+      SET title = ?,
+          patientId = ?,
           state = ?,
           collectedInfo = ?,
           selectedDoctorId = ?,
@@ -268,6 +369,7 @@ const saveSession = async (session) => {
       WHERE sessionId = ?
     `,
     [
+      session.title || DEFAULT_SESSION_TITLE,
       session.patientId || null,
       session.state,
       JSON.stringify(session.collectedInfo || defaultCollectedInfo()),
@@ -281,8 +383,8 @@ const saveSession = async (session) => {
   );
 };
 
-const resetSession = async (sessionId) => {
-  const session = await getOrCreateSession(sessionId);
+const resetSession = async (sessionId, patientId) => {
+  const session = await getOwnedSession(sessionId, patientId);
   session.state = STATES.START;
   session.collectedInfo = defaultCollectedInfo();
   session.selectedDoctorId = null;
@@ -291,6 +393,23 @@ const resetSession = async (sessionId) => {
   session.lastAiResult = null;
   await saveSession(session);
   return session;
+};
+
+const saveChatMessage = async (session, role, message, state = null, data = null) => {
+  await connection.promise().query(
+    `
+      INSERT INTO chat_messages
+        (chatSessionId, role, message, state, data)
+      VALUES (?, ?, ?, ?, ?)
+    `,
+    [
+      session.id,
+      role,
+      String(message || ""),
+      state || null,
+      data ? JSON.stringify(data) : null,
+    ]
+  );
 };
 
 const responseForSession = (session, reply, success = true, extraData = {}) => {
@@ -1207,7 +1326,7 @@ const dispatchByState = async (session, message) => {
 
 const handleChatMessage = async ({ sessionId, message, patientId, patientEmail }) => {
   const trimmedMessage = String(message || "").trim();
-  const session = await getOrCreateSession(sessionId, patientId);
+  const session = await getOwnedSession(sessionId, patientId);
   await hydratePatientInfo(session, patientEmail);
 
   if (!trimmedMessage) {
@@ -1219,26 +1338,38 @@ const handleChatMessage = async ({ sessionId, message, patientId, patientEmail }
   }
 
   try {
+    if (!session.title || session.title === DEFAULT_SESSION_TITLE) {
+      session.title = buildSessionTitle(trimmedMessage);
+    }
+    await saveChatMessage(session, "user", trimmedMessage);
+
     const response = isCancelMessage(trimmedMessage)
       ? cancelSession(session)
       : await dispatchByState(session, trimmedMessage);
 
     await saveSession(session);
+    await saveChatMessage(session, "bot", response.reply, response.state, response.data);
     return response;
   } catch (error) {
     console.error("chatService.handleChatMessage error:", error);
     session.state = STATES.ERROR;
-    await saveSession(session);
-    return responseForSession(
+    const response = responseForSession(
       session,
       "Hiện tại tôi chưa kết nối được dịch vụ AI. Bạn vui lòng thử lại sau.",
       false
     );
+    await saveSession(session);
+    await saveChatMessage(session, "bot", response.reply, response.state, response.data);
+    return response;
   }
 };
 
 module.exports = {
   STATES,
+  createChatSession,
+  getChatSessions,
+  getChatMessages,
+  getOwnedSession,
   getOrCreateSession,
   saveSession,
   resetSession,
