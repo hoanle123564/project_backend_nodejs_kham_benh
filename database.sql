@@ -158,6 +158,7 @@ CREATE TABLE IF NOT EXISTS `schedule` (
   `timeType` varchar(10) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT 'Tham chiếu lookup.keyMap với type=TIME (T1-T8)',
   `appointmentTypeId` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT 'AT1' COMMENT 'AT1=Kham tai phong kham, AT2=Kham online/video',
   `maxNumber` int DEFAULT '10' COMMENT 'Số lượng bệnh nhân tối đa',
+  `price` int DEFAULT NULL COMMENT 'Gia kham cu the cua ca lich, null thi dung gia mac dinh cua bac si',
   `createdAt` datetime NULL DEFAULT CURRENT_TIMESTAMP,
   `updatedAt` datetime NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
@@ -234,12 +235,13 @@ CREATE TABLE IF NOT EXISTS `booking_queue` (
 
 -- =====================================================
 -- BANG 8C: CHAT_SESSIONS (Trang thai hoi thoai chatbot)
--- Luu state machine chatbot, khong luu tung tin nhan trong phase nay.
+-- Luu state machine chatbot va tieu de ngan cho lich su hoi thoai.
 -- =====================================================
 CREATE TABLE IF NOT EXISTS `chat_sessions` (
   `id` INT AUTO_INCREMENT PRIMARY KEY,
   `sessionId` VARCHAR(100) NOT NULL,
   `patientId` INT NULL,
+  `title` VARCHAR(255) NULL,
   `state` VARCHAR(50) NOT NULL,
   `collectedInfo` JSON NOT NULL,
   `selectedDoctorId` INT NULL,
@@ -254,6 +256,22 @@ CREATE TABLE IF NOT EXISTS `chat_sessions` (
   KEY `idx_chat_sessions_state` (`state`),
   CONSTRAINT `fk_chat_session_patient` FOREIGN KEY (`patientId`) REFERENCES `users` (`id`) ON DELETE SET NULL,
   CONSTRAINT `fk_chat_session_booking` FOREIGN KEY (`bookingId`) REFERENCES `booking` (`id`) ON DELETE SET NULL
+) ENGINE=InnoDB;
+
+-- =====================================================
+-- BANG 8D: CHAT_MESSAGES (Tin nhan chatbot theo tung hoi thoai)
+-- =====================================================
+CREATE TABLE IF NOT EXISTS `chat_messages` (
+  `id` INT AUTO_INCREMENT PRIMARY KEY,
+  `chatSessionId` INT NOT NULL,
+  `role` ENUM('user', 'bot') NOT NULL,
+  `message` TEXT NOT NULL,
+  `state` VARCHAR(50) NULL,
+  `data` JSON NULL,
+  `createdAt` DATETIME DEFAULT CURRENT_TIMESTAMP,
+  `updatedAt` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  KEY `idx_chat_messages_session_created` (`chatSessionId`, `createdAt`),
+  CONSTRAINT `fk_chat_messages_session` FOREIGN KEY (`chatSessionId`) REFERENCES `chat_sessions` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
 -- =====================================================
