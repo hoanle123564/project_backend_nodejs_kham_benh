@@ -5,6 +5,7 @@ const {
     saveDetailInfoDoctor,
     PostScheduleDoctor,
     GetcheScheduleDoctorByDate,
+    updateScheduleDoctor,
     GetListPatientForDoctor,
     sendRemedy,
     deleteScheduleDoctor,
@@ -116,6 +117,25 @@ const GetcheScheduleDoctor = async (req, res) => {
         });
     }
 }
+
+const handleUpdateScheduleDoctor = async (req, res) => {
+    try {
+        let scheduleId = req.body.id;
+        const allowed = await canManageSchedule(req.user, scheduleId);
+        if (!allowed) {
+            return res.status(403).json(FORBIDDEN_RESPONSE);
+        }
+
+        let response = await updateScheduleDoctor(req.body);
+        return res.status(200).json(response);
+    } catch (error) {
+        console.log("handleUpdateScheduleDoctor error", error);
+        return res.status(400).json({
+            errCode: -1,
+            errMessage: "Error from server",
+        });
+    }
+};
 
 const getListPatientForDoctor = async (req, res) => {
     try {
@@ -259,6 +279,7 @@ module.exports = {
     GetcheScheduleDoctor,
     getListPatientForDoctor,
     postSendRemedy,
+    handleUpdateScheduleDoctor,
     handleDeleteScheduleDoctor,
     getListAppointmentForDoctor,
     getListBooking,

@@ -11,6 +11,7 @@ const {
   changeActiveStatus,
 } = require("./contentMetaService");
 const { getBookingListScope } = require("./clinicAccessService");
+const { getDoctorPriceAtBooking, parsePriceToNumber } = require("./adminDashboardService");
 
 const buildDoctorSlugSource = (doctor) => {
   const fullName = `${doctor?.firstName || ""} ${doctor?.lastName || ""}`.trim();
@@ -304,6 +305,9 @@ const getAllDoctorHome = async () => {
           di.slug,
           di.isActive,
           di.displayOrder,
+          di.priceId,
+          offlinePrice.value_vi AS priceVi,
+          offlinePrice.value_en AS priceEn,
           di.onlinePriceId,
           onlinePrice.value_vi AS onlinePriceVi,
           onlinePrice.value_en AS onlinePriceEn,
@@ -324,6 +328,8 @@ const getAllDoctorHome = async () => {
           ON u.positionId = p.keyMap AND p.type = 'POSITION'
         LEFT JOIN doctor_info AS di
           ON di.doctorId = u.id
+        LEFT JOIN lookup AS offlinePrice
+          ON offlinePrice.keyMap = di.priceId AND offlinePrice.type = 'PRICE'
         LEFT JOIN lookup AS onlinePrice
           ON onlinePrice.keyMap = di.onlinePriceId AND onlinePrice.type = 'PRICE'
         LEFT JOIN specialty AS s
@@ -531,6 +537,33 @@ const normalizeDate = (dateValue) => {
 
 const DEFAULT_APPOINTMENT_TYPE_ID = "AT1";
 
+const normalizeSchedulePrice = (value) => {
+  if (value === undefined || value === null || value === "") {
+    return { ok: true, value: null, provided: false };
+  }
+
+  const price = Number(value);
+  if (!Number.isFinite(price) || price < 0 || !Number.isInteger(price)) {
+    return { ok: false, value: null, provided: true };
+  }
+
+  return { ok: true, value: price, provided: true };
+};
+
+const resolveSchedulePriceForSave = async (doctorId, appointmentTypeId, value) => {
+  const normalized = normalizeSchedulePrice(value);
+  if (!normalized.ok || normalized.provided) {
+    return normalized;
+  }
+
+  const defaultPrice = await getDoctorPriceAtBooking(doctorId, appointmentTypeId);
+  return {
+    ok: true,
+    value: defaultPrice > 0 ? defaultPrice : null,
+    provided: false,
+  };
+};
+
 const PostScheduleDoctor = async (data) => {
   const status = {};
   try {
@@ -546,6 +579,17 @@ const PostScheduleDoctor = async (data) => {
       data.appointmentTypeId && String(data.appointmentTypeId).trim()
         ? String(data.appointmentTypeId).trim()
         : DEFAULT_APPOINTMENT_TYPE_ID;
+    const schedulePrice = await resolveSchedulePriceForSave(
+      doctorId,
+      appointmentTypeId,
+      data.price
+    );
+
+    if (!schedulePrice.ok) {
+      status.errCode = 2;
+      status.errMessage = "Schedule price must be a valid non-negative integer";
+      return status;
+    }
 
     // Chuẩn hóa định dạng ngày (trước khi dùng)
 
@@ -556,6 +600,7 @@ const PostScheduleDoctor = async (data) => {
       date,
       slot,
       appointmentTypeId,
+      schedulePrice.value,
     ]);
     console.log("Bulk insert values:", values);
 
@@ -599,7 +644,7 @@ const PostScheduleDoctor = async (data) => {
     //  Insert dữ liệu chuẩn
     const [result] = await connection.promise().query(
       `
-      INSERT INTO schedule (maxNumber, doctorId, date, timeType, appointmentTypeId)
+      INSERT INTO schedule (maxNumber, doctorId, date, timeType, appointmentTypeId, price)
       VALUES ?`,
       [values]
     );
@@ -631,31 +676,90 @@ const GetcheScheduleDoctorByDate = async (doctorId, date) => {
     const normalizedDate = normalizeDate(date);
     const [rows] = await connection.promise().query(
       `
-       SELECT s.id, s.doctorId, s.date, s.timeType, s.appointmentTypeId, s.maxNumber,
+       SELECT s.id, s.doctorId, s.date, s.timeType, s.appointmentTypeId, s.maxNumber, s.price,
             a.value_vi, a.value_en,
             appointmentType.value_vi AS appointmentTypeVi,
-            appointmentType.value_en AS appointmentTypeEn
+            appointmentType.value_en AS appointmentTypeEn,
+            offlinePrice.value_vi AS defaultOfflinePrice,
+            onlinePrice.value_vi AS defaultOnlinePrice
     FROM schedule AS s
+    LEFT JOIN doctor_info AS di
+        ON di.doctorId = s.doctorId
     LEFT JOIN lookup AS a 
         ON s.timeType = a.keyMap AND a.type = 'TIME'
     LEFT JOIN lookup AS appointmentType
         ON s.appointmentTypeId = appointmentType.keyMap AND appointmentType.type = 'APPOINTMENT_TYPE'
+    LEFT JOIN lookup AS offlinePrice
+        ON offlinePrice.keyMap = di.priceId AND offlinePrice.type = 'PRICE'
+    LEFT JOIN lookup AS onlinePrice
+        ON onlinePrice.keyMap = di.onlinePriceId AND onlinePrice.type = 'PRICE'
     WHERE s.doctorId = ? AND s.date = ?
     ORDER BY CAST(SUBSTRING(s.timeType, 2) AS UNSIGNED) ASC
       `,
       [doctorId, normalizedDate]
     );
     console.log("schedules", rows);
+    const data = rows.map((row) => {
+      const price = row.price !== null && row.price !== undefined ? Number(row.price) : null;
+      const defaultPrice = parsePriceToNumber(
+        row.appointmentTypeId === "AT2" ? row.defaultOnlinePrice : row.defaultOfflinePrice
+      );
+
+      return {
+        ...row,
+        price,
+        defaultPrice,
+        effectivePrice: price !== null ? price : defaultPrice,
+      };
+    });
 
     status.errCode = 0;
     status.errMessage = "OK";
-    status.data = rows;
+    status.data = data;
     return status;
   } catch (error) {
     console.log("GetcheScheduleDoctorByDate error:", error);
     status.errCode = 1;
     status.errMessage = error.message || "Database error";
     status.data = [];
+    return status;
+  }
+};
+
+const updateScheduleDoctor = async (data) => {
+  const status = {};
+  try {
+    if (!data || !data.id) {
+      status.errCode = 1;
+      status.errMessage = "Missing required parameters";
+      return status;
+    }
+
+    const normalized = normalizeSchedulePrice(data.price);
+    if (!normalized.ok) {
+      status.errCode = 2;
+      status.errMessage = "Schedule price must be a valid non-negative integer";
+      return status;
+    }
+
+    await connection.promise().query(
+      `
+      UPDATE schedule
+      SET price = ?
+      WHERE id = ?
+      `,
+      [normalized.value, data.id]
+    );
+
+    status.errCode = 0;
+    status.errMessage = "Update schedule successfully";
+    status.data = { id: data.id, price: normalized.value };
+    return status;
+  } catch (error) {
+    console.log("updateScheduleDoctor error:", error);
+    status.errCode = 1;
+    status.errMessage = error.message || "Database error";
+    status.data = {};
     return status;
   }
 };
@@ -1112,6 +1216,7 @@ module.exports = {
   saveDetailInfoDoctor,
   PostScheduleDoctor,
   GetcheScheduleDoctorByDate,
+  updateScheduleDoctor,
   GetListPatientForDoctor,
   sendRemedy,
   deleteScheduleDoctor,

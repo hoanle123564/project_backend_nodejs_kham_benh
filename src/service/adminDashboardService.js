@@ -86,6 +86,29 @@ const getDoctorPriceAtBooking = async (doctorId, appointmentTypeId = APPOINTMENT
     return parsePriceToNumber(priceText);
 };
 
+const getSchedulePriceAtBooking = async (
+    scheduleId,
+    doctorId,
+    appointmentTypeId = APPOINTMENT_TYPE.OFFLINE
+) => {
+    const [rows] = await connection.promise().query(
+        `
+        SELECT price
+        FROM schedule
+        WHERE id = ?
+        LIMIT 1
+        `,
+        [scheduleId]
+    );
+
+    const schedulePrice = rows[0]?.price;
+    if (schedulePrice !== null && schedulePrice !== undefined && schedulePrice !== "") {
+        return Number(schedulePrice) || 0;
+    }
+
+    return getDoctorPriceAtBooking(doctorId, appointmentTypeId);
+};
+
 const backfillBookingPrices = async () => {
     await ensurePriceAtBookingColumn();
 
@@ -93,11 +116,14 @@ const backfillBookingPrices = async () => {
         `
         SELECT
             b.id,
-            CASE
-                WHEN s.appointmentTypeId = ?
-                THEN onlinePrice.value_vi
-                ELSE offlinePrice.value_vi
-            END AS priceVi
+            COALESCE(
+                s.price,
+                CASE
+                    WHEN s.appointmentTypeId = ?
+                    THEN onlinePrice.value_vi
+                    ELSE offlinePrice.value_vi
+                END
+            ) AS priceVi
         FROM booking b
         LEFT JOIN schedule s
             ON s.id = b.scheduleId
@@ -520,6 +546,7 @@ module.exports = {
     parsePriceToNumber,
     ensurePriceAtBookingColumn,
     getDoctorPriceAtBooking,
+    getSchedulePriceAtBooking,
     backfillBookingPrices,
     getDashboardStatistics,
 };

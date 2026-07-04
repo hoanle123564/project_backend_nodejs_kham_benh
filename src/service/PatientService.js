@@ -4,7 +4,7 @@ require("moment/locale/vi"); // bắt buộc để moment hiểu tiếng Việt
 const { v4: uuidv4 } = require("uuid");
 require("dotenv").config();
 const { sendSimpleEmail } = require("./emailService");
-const { ensurePriceAtBookingColumn, getDoctorPriceAtBooking } = require("./adminDashboardService");
+const { ensurePriceAtBookingColumn, getSchedulePriceAtBooking } = require("./adminDashboardService");
 const { withTransaction } = require("./transactionService");
 const { assignBookingQueueNumberInCurrentTransaction } = require("./bookingQueueService");
 const {
@@ -163,7 +163,8 @@ const bookAppointment = async (data) => {
     const bookingDate = moment(date, ["DD/MM/YYYY", moment.ISO_8601]).format("YYYY-MM-DD");
     const token = uuidv4();
     await ensurePriceAtBookingColumn();
-    const priceAtBooking = await getDoctorPriceAtBooking(
+    const priceAtBooking = await getSchedulePriceAtBooking(
+      scheduleId,
       scheduleMeta.doctorId,
       scheduleMeta.appointmentTypeId
     );
