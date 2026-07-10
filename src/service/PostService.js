@@ -1,4 +1,5 @@
 const connection = require("../config/data");
+const { resolveHtmlOnlyRichText } = require("./contentMetaService");
 
 const DEFAULT_PAGE = 1;
 const DEFAULT_LIMIT = 10;
@@ -140,8 +141,7 @@ const buildPostPayload = async (data, executor = connection.promise(), excludeId
             isActive,
             displayOrder,
             shortDescription: data?.shortDescription || "",
-            contentHTML: data?.contentHTML || "",
-            contentMarkdown: "",
+            contentHTML: resolveHtmlOnlyRichText(data, "contentHTML"),
             categoryIds
         }
     };
@@ -290,14 +290,13 @@ const createPost = async (data) => {
         const [insertResult] = await db.query(
             `
                 INSERT INTO post
-                    (title, shortDescription, contentHTML, contentMarkdown, slug, image, bannerImage, isActive, displayOrder)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (title, shortDescription, contentHTML, slug, image, bannerImage, isActive, displayOrder)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             `,
             [
                 payload.title,
                 payload.shortDescription,
                 payload.contentHTML,
-                payload.contentMarkdown,
                 payload.slug,
                 payload.image,
                 payload.bannerImage,
@@ -795,14 +794,13 @@ const editPost = async (data) => {
         await db.query(
             `
                 UPDATE post
-                SET title = ?, shortDescription = ?, contentHTML = ?, contentMarkdown = ?, slug = ?, image = ?, bannerImage = ?, isActive = ?, displayOrder = ?
+                SET title = ?, shortDescription = ?, contentHTML = ?, slug = ?, image = ?, bannerImage = ?, isActive = ?, displayOrder = ?
                 WHERE id = ?
             `,
             [
                 payload.title,
                 payload.shortDescription,
                 payload.contentHTML,
-                payload.contentMarkdown,
                 payload.slug,
                 payload.image,
                 payload.bannerImage,

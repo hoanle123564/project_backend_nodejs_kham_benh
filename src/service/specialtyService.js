@@ -3,6 +3,7 @@ const {
     normalizeSlug,
     parseOptionalDisplayOrder,
     parseOptionalIsActive,
+    resolveHtmlOnlyRichText,
     getNextDisplayOrder,
     buildUniqueSlug,
     updateDisplayOrderBatch,
@@ -11,8 +12,7 @@ const {
 
 const prepareSpecialtyPayload = async (data, excludeId = null) => {
     const name = String(data?.name || "").trim();
-    const descriptionHTML = data?.descriptionHTML || "";
-    const descriptionMarkdown = data?.descriptionMarkdown || "";
+    const descriptionHTML = resolveHtmlOnlyRichText(data, "descriptionHTML");
     const slugSource = String(data?.slug || "").trim() || name;
     const slug = normalizeSlug(slugSource);
 
@@ -44,7 +44,6 @@ const prepareSpecialtyPayload = async (data, excludeId = null) => {
             slug: uniqueSlug,
             image: data?.image,
             descriptionHTML,
-            descriptionMarkdown,
             isActive,
             displayOrder,
         },
@@ -69,14 +68,13 @@ const createSpecialty = async (data) => {
 
         await connection.promise().query(
             `INSERT INTO specialty
-             (name, slug, image, descriptionHTML, descriptionMarkdown, isActive, displayOrder)
-             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+             (name, slug, image, descriptionHTML, isActive, displayOrder)
+             VALUES (?, ?, ?, ?, ?, ?)`,
             [
                 payload.name,
                 payload.slug,
                 payload.image,
                 payload.descriptionHTML,
-                payload.descriptionMarkdown,
                 payload.isActive,
                 payload.displayOrder,
             ]
@@ -269,14 +267,13 @@ const editSpecialty = async (data) => {
 
         await connection.promise().query(
             `UPDATE specialty
-             SET name = ?, slug = ?, image = ?, descriptionHTML = ?, descriptionMarkdown = ?, isActive = ?, displayOrder = ?
+             SET name = ?, slug = ?, image = ?, descriptionHTML = ?, isActive = ?, displayOrder = ?
              WHERE id = ?`,
             [
                 payload.name,
                 payload.slug,
                 payload.image,
                 payload.descriptionHTML,
-                payload.descriptionMarkdown,
                 payload.isActive,
                 payload.displayOrder,
                 specialtyId,
