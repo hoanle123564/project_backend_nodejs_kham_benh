@@ -43,11 +43,11 @@ const getScheduleMeta = async (scheduleId) => {
   return rows[0] || null;
 };
 
-// Khóa lịch trong transaction rồi kiểm tra số booking chưa hủy để tránh vượt maxNumber.
-const getScheduleCapacityInCurrentTransaction = async (scheduleId, db) => {
+// Khóa lịch trong transaction rồi kiểm tra booking chưa hủy để tránh đặt trùng slot.
+const getScheduleOccupancyInCurrentTransaction = async (scheduleId, db) => {
   const [scheduleRows] = await db.query(
     `
-      SELECT id, maxNumber
+      SELECT id
       FROM schedule
       WHERE id = ?
       LIMIT 1
@@ -60,9 +60,6 @@ const getScheduleCapacityInCurrentTransaction = async (scheduleId, db) => {
     return null;
   }
 
-  const maxNumber = Number(scheduleRows[0].maxNumber) > 0
-    ? Number(scheduleRows[0].maxNumber)
-    : 1;
   const [bookingRows] = await db.query(
     `
       SELECT COUNT(*) AS bookedCount
@@ -75,9 +72,8 @@ const getScheduleCapacityInCurrentTransaction = async (scheduleId, db) => {
   const bookedCount = Number(bookingRows[0]?.bookedCount) || 0;
 
   return {
-    maxNumber,
     bookedCount,
-    remaining: Math.max(maxNumber - bookedCount, 0),
+    hasActiveBooking: bookedCount > 0 ? 1 : 0,
   };
 };
 
@@ -171,13 +167,13 @@ const bookAppointment = async (data) => {
 
     // Gói tạo/cập nhật bệnh nhân, chống đặt trùng và cấp queue trong một transaction.
     const bookingResult = await withTransaction(async (db) => {
-      const capacity = await getScheduleCapacityInCurrentTransaction(scheduleId, db);
-      if (!capacity) {
+      const occupancy = await getScheduleOccupancyInCurrentTransaction(scheduleId, db);
+      if (!occupancy) {
         return { missingSchedule: true };
       }
 
-      if (capacity.remaining <= 0) {
-        return { full: true };
+      if (occupancy.hasActiveBooking === 1) {
+        return { booked: true };
       }
 
       const realPatientId = await resolvePatientId({
@@ -189,23 +185,6 @@ const bookAppointment = async (data) => {
         gender,
         phoneNumber,
       }, db);
-
-      const [existing] = await db.query(
-        `
-          SELECT id
-          FROM booking
-          WHERE scheduleId = ?
-            AND patientId = ?
-            AND date = ?
-        `,
-        [scheduleId, realPatientId, bookingDate]
-      );
-
-      if (existing.length > 0) {
-        return {
-          duplicate: true,
-        };
-      }
 
       // Tạo booking ở trạng thái chờ xác nhận, sau đó cấp STT để bệnh nhân thấy số thứ tự.
       const [booking] = await db.query(
@@ -234,7 +213,6 @@ const bookAppointment = async (data) => {
       );
 
       return {
-        duplicate: false,
         booking,
         queue: queue.data,
       };
@@ -247,17 +225,10 @@ const bookAppointment = async (data) => {
       };
     }
 
-    if (bookingResult.full) {
+    if (bookingResult.booked) {
       return {
         errCode: 4,
-        errMessage: "Selected schedule is full.",
-      };
-    }
-
-    if (bookingResult.duplicate) {
-      return {
-        errCode: 2,
-        errMessage: "You already booked this schedule.",
+        errMessage: "Selected schedule has already been booked.",
       };
     }
 

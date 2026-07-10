@@ -53,6 +53,25 @@ const parseOptionalIsActive = (value, fallbackValue = 1) => {
   return parseIsActive(value);
 };
 
+const resolveHtmlOnlyRichText = (data, htmlKey, fallbackValue = "") => {
+  const source = data || {};
+  const markdownKey = htmlKey.replace(/HTML$/, "Markdown");
+  const hasHtml = Object.prototype.hasOwnProperty.call(source, htmlKey);
+  const hasMarkdown = Object.prototype.hasOwnProperty.call(source, markdownKey);
+  const htmlValue = source[htmlKey];
+  const markdownValue = source[markdownKey];
+
+  if (htmlValue !== undefined && htmlValue !== null && String(htmlValue).trim()) {
+    return htmlValue;
+  }
+
+  if (markdownValue !== undefined && markdownValue !== null && String(markdownValue).trim()) {
+    return markdownValue;
+  }
+
+  return hasHtml || hasMarkdown ? "" : fallbackValue;
+};
+
 const getNextDisplayOrder = async (tableName, executor = connection.promise()) => {
   if (!ALLOWED_SLUG_TABLES.has(tableName)) {
     throw new Error("Invalid table name");
@@ -241,6 +260,7 @@ module.exports = {
   parseOptionalDisplayOrder,
   parseIsActive,
   parseOptionalIsActive,
+  resolveHtmlOnlyRichText,
   getNextDisplayOrder,
   buildUniqueSlug,
   validateOrderItems,

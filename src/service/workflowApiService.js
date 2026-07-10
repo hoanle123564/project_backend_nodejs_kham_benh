@@ -588,6 +588,9 @@ const getDoctorAppointmentDetail = async (query) => {
           patient.phoneNumber AS patientPhoneNumber,
           patient.gender AS patientGender,
           patient.address AS patientAddress,
+          doctor.id AS doctorId,
+          doctor.firstName AS doctorFirstName,
+          doctor.lastName AS doctorLastName,
           pp.medicalCode,
           pp.dateOfBirth,
           lvs.value_vi AS visitStatusVi,
@@ -606,6 +609,8 @@ const getDoctorAppointmentDetail = async (query) => {
           ON bq.bookingId = b.id
         INNER JOIN users patient
           ON patient.id = b.patientId
+        INNER JOIN users doctor
+          ON doctor.id = s.doctorId
         LEFT JOIN patient_profile pp
           ON pp.patientId = patient.id
         LEFT JOIN lookup lt
@@ -654,9 +659,10 @@ const getDoctorAppointmentDetail = async (query) => {
 };
 
 // Lấy danh sách hồ sơ bệnh án của bác sĩ, hỗ trợ lọc ngày/trạng thái/tìm kiếm/phân trang.
-const getDoctorMedicalRecordList = async (query) => {
+const getDoctorMedicalRecordList = async (query, options = {}) => {
   try {
-    const doctorId = normalizePositiveId(query?.doctorId, "doctorId");
+    const includeAllDoctors = options.includeAllDoctors === true;
+    const doctorId = includeAllDoctors ? null : normalizePositiveId(query?.doctorId, "doctorId");
     const appointmentDateValue = normalizeOptionalString(query?.date || query?.appointmentDate);
     const appointmentDate = appointmentDateValue ? normalizeDate(appointmentDateValue) : null;
     const pagination = normalizePagination(query);
@@ -670,11 +676,17 @@ const getDoctorMedicalRecordList = async (query) => {
       visitStatusId: "ev.statusId",
       recordStatusId: "mr.statusId",
       completedAt: "ev.completedAt",
+      doctorName: "doctorName",
     };
     const sortBy = sortColumns[query?.sortBy] || "ev.examDate";
     const sortDirection = normalizeSortDirection(query?.sortDir);
-    const filters = ["mr.doctorId = ?"];
-    const params = [doctorId];
+    const filters = [];
+    const params = [];
+
+    if (!includeAllDoctors) {
+      filters.push("mr.doctorId = ?");
+      params.push(doctorId);
+    }
 
     // Bộ lọc ngày là tùy chọn; không truyền ngày thì trả toàn bộ hồ sơ thuộc bác sĩ.
     if (appointmentDate) {
@@ -703,12 +715,15 @@ const getDoctorMedicalRecordList = async (query) => {
           OR pp.medicalCode LIKE ?
           OR b.reason LIKE ?
           OR CAST(mr.id AS CHAR) LIKE ?
+          OR CONCAT_WS(' ', doctor.firstName, doctor.lastName) LIKE ?
+          OR doctor.email LIKE ?
+          OR doctor.phoneNumber LIKE ?
         )
       `);
-      params.push(keyword, keyword, keyword, keyword, keyword, keyword);
+      params.push(keyword, keyword, keyword, keyword, keyword, keyword, keyword, keyword, keyword);
     }
 
-    const whereClause = filters.join(" AND ");
+    const whereClause = filters.length > 0 ? filters.join(" AND ") : "1 = 1";
     // baseFrom gom toàn bộ JOIN/filter để query dữ liệu và query đếm luôn khớp nhau.
     const baseFrom = `
       FROM medical_record mr
@@ -720,6 +735,8 @@ const getDoctorMedicalRecordList = async (query) => {
         ON s.id = b.scheduleId
       INNER JOIN users patient
         ON patient.id = mr.patientId
+      INNER JOIN users doctor
+        ON doctor.id = mr.doctorId
       LEFT JOIN patient_profile pp
         ON pp.patientId = patient.id
       LEFT JOIN lookup lt
@@ -742,7 +759,7 @@ const getDoctorMedicalRecordList = async (query) => {
           ev.id AS examinationVisitId,
           ev.bookingId,
           ev.patientId,
-          ev.doctorId,
+          mr.doctorId AS doctorId,
           ev.examDate,
           ev.queueNumber,
           ev.statusId AS visitStatusId,
@@ -760,6 +777,11 @@ const getDoctorMedicalRecordList = async (query) => {
           patient.firstName AS patientFirstName,
           patient.lastName AS patientLastName,
           patient.phoneNumber AS patientPhoneNumber,
+          CONCAT_WS(' ', doctor.firstName, doctor.lastName) AS doctorName,
+          doctor.firstName AS doctorFirstName,
+          doctor.lastName AS doctorLastName,
+          doctor.email AS doctorEmail,
+          doctor.phoneNumber AS doctorPhoneNumber,
           pp.medicalCode,
           lvs.value_vi AS visitStatusVi,
           lvs.value_en AS visitStatusEn,
@@ -791,6 +813,9 @@ const getDoctorMedicalRecordList = async (query) => {
     return errorResponse(error, []);
   }
 };
+
+const getAdminMedicalRecordList = async (query) =>
+  getDoctorMedicalRecordList(query, { includeAllDoctors: true });
 
 // Bắt đầu lượt khám từ booking và trả về trạng thái tạo visit/medical record.
 const startVisitForBooking = async (data) => {
@@ -1184,6 +1209,7 @@ module.exports = {
   getDoctorQueue,
   getDoctorAppointmentDetail,
   getDoctorMedicalRecordList,
+  getAdminMedicalRecordList,
   startVisitForBooking,
   getExaminationVisitDetail,
   ensureRecordForVisit,

@@ -13,6 +13,7 @@ const {
   getDoctorQueue,
   getDoctorAppointmentDetail,
   getDoctorMedicalRecordList,
+  getAdminMedicalRecordList,
   startVisitForBooking,
   getExaminationVisitDetail,
   ensureRecordForVisit,
@@ -175,6 +176,15 @@ const getDoctorMedicalRecordsApi = async (req, res) => {
     return sendResponse(res, response);
   } catch (error) {
     return handleControllerError(res, "getDoctorMedicalRecordsApi", error);
+  }
+};
+
+const getAdminMedicalRecordsApi = async (req, res) => {
+  try {
+    const response = await getAdminMedicalRecordList(req.query);
+    return sendResponse(res, response);
+  } catch (error) {
+    return handleControllerError(res, "getAdminMedicalRecordsApi", error);
   }
 };
 
@@ -380,6 +390,7 @@ module.exports = {
   getDoctorQueueApi,
   getDoctorAppointmentDetailApi,
   getDoctorMedicalRecordsApi,
+  getAdminMedicalRecordsApi,
   ensureDoctorExaminationVisit,
   getDoctorExaminationVisitDetail,
   ensureDoctorMedicalRecord,
