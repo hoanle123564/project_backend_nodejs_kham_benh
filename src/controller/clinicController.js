@@ -5,7 +5,13 @@ const {
     deleteClinic,
     editClinic,
     updateClinicOrder,
-    changeStatusClinic
+    changeStatusClinic,
+    getClinicContentSections,
+    createClinicContentSection,
+    editClinicContentSection,
+    deleteClinicContentSection,
+    changeStatusClinicContentSection,
+    updateClinicContentSectionOrder,
 } = require("../service/ClinicService");
 const {
     FORBIDDEN_RESPONSE,
@@ -115,6 +121,115 @@ const handleChangeStatusClinic = async (req, res) => {
     }
 };
 
+const handleGetClinicContentSections = async (req, res) => {
+    try {
+        const clinicId = req.query?.clinicId;
+        const allowed = await canManageClinic(req.user, clinicId);
+        if (!allowed) {
+            return res.status(403).json(FORBIDDEN_RESPONSE);
+        }
+
+        let response = await getClinicContentSections(clinicId);
+        return res.status(200).json(response);
+    } catch (error) {
+        console.log("handleGetClinicContentSections error", error);
+        return res.status(400).json({
+            errCode: -1,
+            errMessage: "Error from server",
+        });
+    }
+};
+
+const postCreateClinicContentSection = async (req, res) => {
+    try {
+        const allowed = await canManageClinic(req.user, req.body?.clinicId);
+        if (!allowed) {
+            return res.status(403).json(FORBIDDEN_RESPONSE);
+        }
+
+        let response = await createClinicContentSection(req.body);
+        return res.status(200).json(response);
+    } catch (error) {
+        console.log("postCreateClinicContentSection error", error);
+        return res.status(400).json({
+            errCode: -1,
+            errMessage: "Error from server",
+        });
+    }
+};
+
+const handleEditClinicContentSection = async (req, res) => {
+    try {
+        const allowed = await canManageClinic(req.user, req.body?.clinicId);
+        if (!allowed) {
+            return res.status(403).json(FORBIDDEN_RESPONSE);
+        }
+
+        let response = await editClinicContentSection(req.body);
+        return res.status(200).json(response);
+    } catch (error) {
+        console.log("handleEditClinicContentSection error", error);
+        return res.status(400).json({
+            errCode: -1,
+            errMessage: "Error from server",
+        });
+    }
+};
+
+const handleDeleteClinicContentSection = async (req, res) => {
+    try {
+        const allowed = await canManageClinic(req.user, req.body?.clinicId);
+        if (!allowed) {
+            return res.status(403).json(FORBIDDEN_RESPONSE);
+        }
+
+        let response = await deleteClinicContentSection(req.body);
+        return res.status(200).json(response);
+    } catch (error) {
+        console.log("handleDeleteClinicContentSection error", error);
+        return res.status(400).json({
+            errCode: -1,
+            errMessage: "Error from server",
+        });
+    }
+};
+
+const handleChangeStatusClinicContentSection = async (req, res) => {
+    try {
+        const allowed = await canManageClinic(req.user, req.body?.clinicId);
+        if (!allowed) {
+            return res.status(403).json(FORBIDDEN_RESPONSE);
+        }
+
+        let response = await changeStatusClinicContentSection(req.body);
+        return res.status(200).json(response);
+    } catch (error) {
+        console.log("handleChangeStatusClinicContentSection error", error);
+        return res.status(400).json({
+            errCode: -1,
+            errMessage: "Error from server",
+        });
+    }
+};
+
+const handleUpdateClinicContentSectionOrder = async (req, res) => {
+    try {
+        const allowed = await canManageClinic(req.user, req.body?.clinicId);
+        if (!allowed) {
+            return res.status(403).json(FORBIDDEN_RESPONSE);
+        }
+
+        let response = await updateClinicContentSectionOrder(req.body);
+        return res.status(200).json(response);
+    } catch (error) {
+        console.log("handleUpdateClinicContentSectionOrder error", error);
+        return res.status(400).json({
+            errCode: -1,
+            errMessage: "Error from server",
+        });
+    }
+};
+
 module.exports = {
     postCreateClinic,
     getAllClinic,
@@ -123,4 +238,10 @@ module.exports = {
     handleEditClinic,
     handleUpdateClinicOrder,
     handleChangeStatusClinic,
+    handleGetClinicContentSections,
+    postCreateClinicContentSection,
+    handleEditClinicContentSection,
+    handleDeleteClinicContentSection,
+    handleChangeStatusClinicContentSection,
+    handleUpdateClinicContentSectionOrder,
 };

@@ -57,7 +57,6 @@ CREATE TABLE IF NOT EXISTS `specialty` (
   `slug` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
   `image` longtext COLLATE utf8mb4_unicode_ci COMMENT 'Base64 image',
   `descriptionHTML` text COLLATE utf8mb4_unicode_ci,
-  `descriptionMarkdown` text COLLATE utf8mb4_unicode_ci,
   `createdAt` datetime NULL DEFAULT CURRENT_TIMESTAMP,
   `updatedAt` datetime NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `isActive` tinyint(1) DEFAULT '1',
@@ -83,8 +82,7 @@ CREATE TABLE IF NOT EXISTS `clinic` (
   `districtCode` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'Clinic district, lookup.keyMap type=DISTRICT',
   `wardCode` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'Clinic ward, lookup.keyMap type=WARD',
   `image` longtext COLLATE utf8mb4_unicode_ci,
-  `descriptionHTML` text COLLATE utf8mb4_unicode_ci,
-  `descriptionMarkdown` text COLLATE utf8mb4_unicode_ci,
+  `banner_img` longtext COLLATE utf8mb4_unicode_ci,
   `createdAt` datetime NULL DEFAULT CURRENT_TIMESTAMP,
   `updatedAt` datetime NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `isActive` tinyint(1) DEFAULT '1',
@@ -98,6 +96,23 @@ CREATE TABLE IF NOT EXISTS `clinic` (
   KEY `idx_clinic_manager` (`managerUserId`),
   KEY `idx_clinic_location` (`provinceCode`, `districtCode`, `wardCode`),
   CONSTRAINT `fk_clinic_manager` FOREIGN KEY (`managerUserId`) REFERENCES `users` (`id`) ON DELETE SET NULL ON UPDATE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS `clinic_content_section` (
+  `id` INT NOT NULL AUTO_INCREMENT,
+  `clinicId` INT NOT NULL,
+  `title` VARCHAR(255) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `contentHTML` LONGTEXT COLLATE utf8mb4_unicode_ci NULL,
+  `displayOrder` INT DEFAULT 0,
+  `isActive` TINYINT(1) DEFAULT 1,
+  `createdAt` DATETIME DEFAULT CURRENT_TIMESTAMP,
+  `updatedAt` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_clinic_content_section_clinic` (`clinicId`),
+  KEY `idx_clinic_content_section_public_order` (`clinicId`, `isActive`, `displayOrder`),
+  CONSTRAINT `fk_clinic_content_section_clinic`
+    FOREIGN KEY (`clinicId`) REFERENCES `clinic` (`id`)
+    ON DELETE CASCADE ON UPDATE CASCADE
 ) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS `clinic_department` (
@@ -125,7 +140,6 @@ CREATE TABLE IF NOT EXISTS `doctor_info` (
   `id` int NOT NULL AUTO_INCREMENT,
   `doctorId` int NOT NULL,
   `contentHTML` TEXT DEFAULT NULL,
-  `contentMarkdown` TEXT DEFAULT NULL,
   `description` TEXT DEFAULT NULL,
   `slug` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `isActive` int DEFAULT '1',
@@ -157,7 +171,6 @@ CREATE TABLE IF NOT EXISTS `schedule` (
   `date` date NOT NULL,
   `timeType` varchar(10) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT 'Tham chiếu lookup.keyMap với type=TIME (T1-T8)',
   `appointmentTypeId` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT 'AT1' COMMENT 'AT1=Kham tai phong kham, AT2=Kham online/video',
-  `maxNumber` int DEFAULT '10' COMMENT 'Số lượng bệnh nhân tối đa',
   `price` int DEFAULT NULL COMMENT 'Gia kham cu the cua ca lich, null thi dung gia mac dinh cua bac si',
   `createdAt` datetime NULL DEFAULT CURRENT_TIMESTAMP,
   `updatedAt` datetime NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -456,7 +469,6 @@ CREATE TABLE IF NOT EXISTS `post` (
   `title` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL COMMENT 'Tiêu đề bài viết',
   `shortDescription` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci COMMENT 'Mô tả ngắn nội dung bài viết',
   `contentHTML` longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci COMMENT 'Nội dung bài viết dạng HTML',
-  `contentMarkdown` longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci COMMENT 'Nội dung bài viết dạng Markdown',
   `slug` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
   `image` longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci COMMENT 'Ảnh đại diện bài viết, có thể lưu URL hoặc Base64',
   `bannerImage` longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci COMMENT 'Ảnh banner bên trong bài viết',

@@ -60,6 +60,7 @@ const {
   getDoctorQueueApi,
   getDoctorAppointmentDetailApi,
   getDoctorMedicalRecordsApi,
+  getAdminMedicalRecordsApi,
   ensureDoctorExaminationVisit,
   getDoctorExaminationVisitDetail,
   ensureDoctorMedicalRecord,
@@ -105,6 +106,12 @@ const {
   handleEditClinic,
   handleUpdateClinicOrder,
   handleChangeStatusClinic,
+  handleGetClinicContentSections,
+  postCreateClinicContentSection,
+  handleEditClinicContentSection,
+  handleDeleteClinicContentSection,
+  handleChangeStatusClinicContentSection,
+  handleUpdateClinicContentSectionOrder,
 } = require("../controller/clinicController");
 const {
   getAllClinicDepartment,
@@ -151,6 +158,7 @@ router.get("/api/lookup", getLookUp);
 
 // admin routes
 router.get("/api/admin/dashboard-statistics", authMiddleware, adminMiddleware, getAdminDashboardStatistics);
+router.get("/api/admin/medical-records", authMiddleware, adminMiddleware, getAdminMedicalRecordsApi);
 
 // doctor routes
 router.get("/api/top-doctor", getTopDoctor);
@@ -226,6 +234,12 @@ router.put("/api/update-clinic-order", authMiddleware, adminMiddleware, handleUp
 router.put("/api/change-status-clinic", authMiddleware, adminMiddleware, handleChangeStatusClinic);
 router.get("/api/get-clinic", getAllClinic);
 router.get("/api/get-detail-clinic-by-id", getDetailClinicById);
+router.get("/api/get-clinic-content-section", authMiddleware, handleGetClinicContentSections);
+router.post("/api/create-clinic-content-section", authMiddleware, postCreateClinicContentSection);
+router.put("/api/edit-clinic-content-section", authMiddleware, handleEditClinicContentSection);
+router.delete("/api/delete-clinic-content-section", authMiddleware, handleDeleteClinicContentSection);
+router.put("/api/change-status-clinic-content-section", authMiddleware, handleChangeStatusClinicContentSection);
+router.put("/api/update-clinic-content-section-order", authMiddleware, handleUpdateClinicContentSectionOrder);
 router.get("/api/get-clinic-department", authMiddleware, getAllClinicDepartment);
 router.post("/api/create-clinic-department", authMiddleware, postCreateClinicDepartment);
 router.put("/api/edit-clinic-department", authMiddleware, handleEditClinicDepartment);
