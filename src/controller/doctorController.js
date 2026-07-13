@@ -6,6 +6,12 @@ const {
     PostScheduleDoctor,
     GetcheScheduleDoctorByDate,
     updateScheduleDoctor,
+    getScheduleRuleById,
+    getScheduleRules,
+    previewScheduleRuleChange,
+    createScheduleRule,
+    updateScheduleRule,
+    deactivateScheduleRule,
     GetListPatientForDoctor,
     sendRemedy,
     deleteScheduleDoctor,
@@ -117,6 +123,107 @@ const GetcheScheduleDoctor = async (req, res) => {
         });
     }
 }
+
+const handleGetScheduleRules = async (req, res) => {
+    try {
+        const doctorId = req.query.doctorId;
+        const allowed = await canManageDoctorSchedule(req.user, doctorId);
+        if (!allowed) {
+            return res.status(403).json(FORBIDDEN_RESPONSE);
+        }
+
+        let response = await getScheduleRules(doctorId, req.query || {});
+        return res.status(200).json(response);
+    } catch (error) {
+        console.log("handleGetScheduleRules error", error);
+        return res.status(400).json({
+            errCode: -1,
+            errMessage: "Error from server",
+        });
+    }
+};
+
+const handlePreviewScheduleRuleChange = async (req, res) => {
+    try {
+        let doctorId = req.body?.doctorId;
+        if (req.body?.id) {
+            const rule = await getScheduleRuleById(req.body.id);
+            doctorId = rule?.doctorId || doctorId;
+        }
+
+        const allowed = await canManageDoctorSchedule(req.user, doctorId);
+        if (!allowed) {
+            return res.status(403).json(FORBIDDEN_RESPONSE);
+        }
+
+        let response = await previewScheduleRuleChange(req.body);
+        return res.status(200).json(response);
+    } catch (error) {
+        console.log("handlePreviewScheduleRuleChange error", error);
+        return res.status(400).json({
+            errCode: -1,
+            errMessage: "Error from server",
+        });
+    }
+};
+
+const handleCreateScheduleRule = async (req, res) => {
+    try {
+        const allowed = await canManageDoctorSchedule(req.user, req.body?.doctorId);
+        if (!allowed) {
+            return res.status(403).json(FORBIDDEN_RESPONSE);
+        }
+
+        let response = await createScheduleRule(req.body, req.user);
+        return res.status(200).json(response);
+    } catch (error) {
+        console.log("handleCreateScheduleRule error", error);
+        return res.status(400).json({
+            errCode: -1,
+            errMessage: "Error from server",
+        });
+    }
+};
+
+const handleUpdateScheduleRule = async (req, res) => {
+    try {
+        const ruleId = req.params?.id || req.body?.id;
+        const rule = await getScheduleRuleById(ruleId);
+        const allowed = await canManageDoctorSchedule(req.user, rule?.doctorId);
+        if (!allowed) {
+            return res.status(403).json(FORBIDDEN_RESPONSE);
+        }
+
+        let response = await updateScheduleRule(ruleId, req.body);
+        return res.status(200).json(response);
+    } catch (error) {
+        console.log("handleUpdateScheduleRule error", error);
+        return res.status(400).json({
+            errCode: -1,
+            errMessage: "Error from server",
+        });
+    }
+};
+
+const handleDeleteScheduleRule = async (req, res) => {
+    try {
+        const ruleId = req.params?.id || req.body?.id;
+        const rule = await getScheduleRuleById(ruleId);
+        const allowed = await canManageDoctorSchedule(req.user, rule?.doctorId);
+        if (!allowed) {
+            return res.status(403).json(FORBIDDEN_RESPONSE);
+        }
+
+        let response = await deactivateScheduleRule(ruleId);
+        return res.status(200).json(response);
+    } catch (error) {
+        console.log("handleDeleteScheduleRule error", error);
+        return res.status(400).json({
+            errCode: -1,
+            errMessage: "Error from server",
+        });
+    }
+};
 
 const handleUpdateScheduleDoctor = async (req, res) => {
     try {
@@ -277,6 +384,11 @@ module.exports = {
     postInfoDoctor,
     CreateScheduleDoctor,
     GetcheScheduleDoctor,
+    handleGetScheduleRules,
+    handlePreviewScheduleRuleChange,
+    handleCreateScheduleRule,
+    handleUpdateScheduleRule,
+    handleDeleteScheduleRule,
     getListPatientForDoctor,
     postSendRemedy,
     handleUpdateScheduleDoctor,
