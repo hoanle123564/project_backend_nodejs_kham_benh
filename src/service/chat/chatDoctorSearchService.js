@@ -1,4 +1,5 @@
 const connection = require("../../config/data");
+const { GetcheScheduleDoctorByDate } = require("../doctor/doctorScheduleService");
 const {
   chatDebug,
   chatWarn,
@@ -12,6 +13,29 @@ const {
   parseMoney,
   buildDoctorName,
 } = require("./chatUtils");
+
+const mapScheduleRowToChatSlot = (row, index) => {
+  const timeText = row.value_vi || row.value_en || row.timeVi || row.timeEn || row.timeType;
+  const startEnd = row.startTime && row.endTime
+    ? { start_time: row.startTime.slice(0, 5), end_time: row.endTime.slice(0, 5) }
+    : splitTimeRange(timeText);
+
+  return {
+    index: index + 1,
+    id: row.id,
+    doctor_id: row.doctorId,
+    date: formatDate(row.date),
+    start_time: startEnd.start_time,
+    end_time: startEnd.end_time,
+    time: timeText,
+    timeType: row.timeType,
+    appointmentTypeId: row.appointmentTypeId,
+    bookedCount: Number(row.bookedCount) || 0,
+    hasActiveBooking: Number(row.hasActiveBooking) ? 1 : 0,
+    remaining: Number(row.remaining) || 0,
+    isFull: Number(row.isFull) ? 1 : 0,
+  };
+};
 
 const getSpecialtyMatchInfo = async (aiSpecialties) => {
   const requested = normalizeSpecialtyNames(aiSpecialties);
@@ -70,53 +94,30 @@ const buildScheduleDateFilter = (collectedInfo = {}, params = []) => {
 
 const getAvailableSlotsForDoctor = async (doctorId, collectedInfo = {}, debugStats = null) => {
   const appointmentTypeId = getAppointmentTypeId(collectedInfo);
-  const params = [doctorId];
-  const dateFilter = buildScheduleDateFilter(collectedInfo, params);
-  params.push(appointmentTypeId);
+  const dates = collectedInfo.preferred_date
+    ? [collectedInfo.preferred_date]
+    : Array.from({ length: 30 }, (_, index) =>
+        new Date(Date.now() + index * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+      );
+  const availableRows = [];
 
-  const [rows] = await connection.promise().query(
-    `
-      SELECT
-        s.id,
-        s.doctorId,
-        s.date,
-        s.timeType,
-        s.appointmentTypeId,
-        lt.value_vi AS timeVi,
-        lt.value_en AS timeEn,
-        COALESCE(activeBooking.bookedCount, 0) AS bookedCount,
-        CASE WHEN COALESCE(activeBooking.bookedCount, 0) > 0 THEN 1 ELSE 0 END AS hasActiveBooking
-      FROM schedule s
-      LEFT JOIN (
-        SELECT scheduleId, COUNT(*) AS bookedCount
-        FROM booking
-        WHERE statusId <> 'S4'
-        GROUP BY scheduleId
-      ) AS activeBooking
-        ON activeBooking.scheduleId = s.id
-      LEFT JOIN lookup lt
-        ON lt.keyMap = s.timeType AND lt.type = 'TIME'
-      WHERE s.doctorId = ?
-        AND ${dateFilter}
-        AND s.appointmentTypeId = ?
-      ORDER BY s.date ASC, CAST(SUBSTRING(s.timeType, 2) AS UNSIGNED) ASC
-      LIMIT 10
-    `,
-    params
-  );
-
-  const availableRows = rows.filter((row) => {
-    return Number(row.hasActiveBooking) !== 1;
-  });
+  for (const date of dates) {
+    const response = await GetcheScheduleDoctorByDate(doctorId, date);
+    const rows = response?.errCode === 0 ? response.data || [] : [];
+    rows
+      .filter((row) => row.appointmentTypeId === appointmentTypeId)
+      .forEach((row) => availableRows.push(row));
+    if (availableRows.length >= 10) break;
+  }
 
   chatDebug("slot filters:", {
     doctorId,
     consultation_type: collectedInfo.consultation_type,
     appointmentTypeId,
     preferred_date: collectedInfo.preferred_date || null,
-    schedules_before_capacity: rows.length,
+    schedules_before_capacity: availableRows.length,
     schedules_after_capacity: availableRows.length,
-    capacity: rows.map((row) => ({
+    capacity: availableRows.map((row) => ({
       scheduleId: row.id,
       bookedCount: Number(row.bookedCount) || 0,
       hasActiveBooking: Number(row.hasActiveBooking) ? 1 : 0,
@@ -124,93 +125,30 @@ const getAvailableSlotsForDoctor = async (doctorId, collectedInfo = {}, debugSta
   });
 
   if (debugStats) {
-    debugStats.schedulesBeforeCapacity += rows.length;
+    debugStats.schedulesBeforeCapacity += availableRows.length;
     debugStats.schedulesAfterCapacity += availableRows.length;
   }
 
-  return availableRows.map((row, index) => {
-    const timeText = row.timeVi || row.timeEn || row.timeType;
-    const { start_time, end_time } = splitTimeRange(timeText);
-    const bookedCount = Number(row.bookedCount) || 0;
-    const hasActiveBooking = Number(row.hasActiveBooking) ? 1 : 0;
-
-    return {
-      index: index + 1,
-      id: row.id,
-      doctor_id: row.doctorId,
-      date: formatDate(row.date),
-      start_time,
-      end_time,
-      time: timeText,
-      timeType: row.timeType,
-      appointmentTypeId: row.appointmentTypeId,
-      bookedCount,
-      hasActiveBooking,
-      remaining: hasActiveBooking ? 0 : 1,
-    };
-  });
+  return availableRows.slice(0, 10).map(mapScheduleRowToChatSlot);
 };
 
 const getNearestAvailableSlotForDoctor = async (doctorId, collectedInfo = {}) => {
   if (!collectedInfo.preferred_date) return null;
 
   const appointmentTypeId = getAppointmentTypeId(collectedInfo);
-  const params = [
-    doctorId,
-    collectedInfo.preferred_date,
-    appointmentTypeId,
-  ];
+  const startDate = new Date(collectedInfo.preferred_date);
+  for (let index = 1; index <= 30; index += 1) {
+    const date = new Date(startDate.getTime() + index * 24 * 60 * 60 * 1000)
+      .toISOString()
+      .slice(0, 10);
+    const response = await GetcheScheduleDoctorByDate(doctorId, date);
+    const row = (response?.data || []).find((item) => item.appointmentTypeId === appointmentTypeId);
+    if (row) {
+      return mapScheduleRowToChatSlot(row, 0);
+    }
+  }
 
-  const [rows] = await connection.promise().query(
-    `
-      SELECT
-        s.id,
-        s.doctorId,
-        s.date,
-        s.timeType,
-        s.appointmentTypeId,
-        lt.value_vi AS timeVi,
-        lt.value_en AS timeEn,
-        COALESCE(activeBooking.bookedCount, 0) AS bookedCount,
-        CASE WHEN COALESCE(activeBooking.bookedCount, 0) > 0 THEN 1 ELSE 0 END AS hasActiveBooking
-      FROM schedule s
-      LEFT JOIN (
-        SELECT scheduleId, COUNT(*) AS bookedCount
-        FROM booking
-        WHERE statusId <> 'S4'
-        GROUP BY scheduleId
-      ) AS activeBooking
-        ON activeBooking.scheduleId = s.id
-      LEFT JOIN lookup lt
-        ON lt.keyMap = s.timeType AND lt.type = 'TIME'
-      WHERE s.doctorId = ?
-        AND s.date > ?
-        AND s.appointmentTypeId = ?
-        AND COALESCE(activeBooking.bookedCount, 0) = 0
-      ORDER BY s.date ASC, CAST(SUBSTRING(s.timeType, 2) AS UNSIGNED) ASC
-      LIMIT 1
-    `,
-    params
-  );
-
-  if (!rows[0]) return null;
-
-  const timeText = rows[0].timeVi || rows[0].timeEn || rows[0].timeType;
-  const { start_time, end_time } = splitTimeRange(timeText);
-
-  return {
-    id: rows[0].id,
-    doctor_id: rows[0].doctorId,
-    date: formatDate(rows[0].date),
-    start_time,
-    end_time,
-    time: timeText,
-    timeType: rows[0].timeType,
-    appointmentTypeId: rows[0].appointmentTypeId,
-    bookedCount: Number(rows[0].bookedCount) || 0,
-    hasActiveBooking: Number(rows[0].hasActiveBooking) ? 1 : 0,
-    remaining: Number(rows[0].hasActiveBooking) ? 0 : 1,
-  };
+  return null;
 };
 
 const findDoctorsFromCollectedInfo = async (collectedInfo = {}, debugStats = null) => {

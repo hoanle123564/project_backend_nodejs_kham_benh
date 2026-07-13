@@ -1,7 +1,9 @@
 const express = require('express')
+const http = require('http')
 // const bodyParser = require('body-parser')
 const ViewEngine = require('../src/config/viewEngine')
 const initWebRoute = require('../src/route/web')
+const { initChatSocket } = require('../src/socket/chatSocket')
 const cors = require('cors')
 require('dotenv').config()
 
@@ -57,7 +59,19 @@ app.use('/', initWebRoute);
 //connectDB();
 
 let port = process.env.PORT
-app.listen(port, () => {
+const server = http.createServer(app)
+initChatSocket(server, {
+    origin: (origin, callback) => {
+        if (isAllowedCorsOrigin(origin)) {
+            callback(null, true)
+            return
+        }
+
+        callback(new Error(`CORS blocked origin: ${origin}`))
+    },
+})
+
+server.listen(port, () => {
     console.log('Backend nodejs is running on port: ' + port);
 
 })
