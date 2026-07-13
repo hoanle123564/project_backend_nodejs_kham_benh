@@ -18,7 +18,8 @@ const GetListPatientForDoctor = async (doctorId, date) => {
          SELECT b.id, b.scheduleId, b.date, s.timeType, s.appointmentTypeId, b.statusId, b.reason,
          s.doctorId, b.patientId, bq.queueNumber, bq.appointmentDate AS queueAppointmentDate,
                 u.email, u.firstName, u.lastName, u.address, u.phoneNumber,
-                a.value_vi AS timeTypeVi, a.value_en AS timeTypeEn,
+                COALESCE(a.value_vi, CONCAT(TIME_FORMAT(s.startTime, '%H:%i'), ' - ', TIME_FORMAT(s.endTime, '%H:%i'))) AS timeTypeVi,
+                COALESCE(a.value_en, CONCAT(TIME_FORMAT(s.startTime, '%H:%i'), ' - ', TIME_FORMAT(s.endTime, '%H:%i'))) AS timeTypeEn,
                 appointmentType.value_vi AS appointmentTypeVi,
                 appointmentType.value_en AS appointmentTypeEn,
                 vcs.statusId AS videoSessionStatusId,
@@ -34,8 +35,8 @@ const GetListPatientForDoctor = async (doctorId, date) => {
                 ON s.appointmentTypeId = appointmentType.keyMap AND appointmentType.type = 'APPOINTMENT_TYPE'
             LEFT JOIN video_consultation_session AS vcs
                 ON vcs.bookingId = b.id
-         WHERE s.doctorId = ? AND b.date = ? AND b.statusId = 'S2'
-         ORDER BY COALESCE(bq.queueNumber, 999999) ASC, CAST(SUBSTRING(s.timeType, 2) AS UNSIGNED) ASC
+         WHERE s.doctorId = ? AND b.date = ? AND b.statusId = 'S8'
+         ORDER BY COALESCE(bq.queueNumber, 999999) ASC, COALESCE(TIME_TO_SEC(s.startTime), CAST(SUBSTRING(s.timeType, 2) AS UNSIGNED)) ASC
         `,
       [doctorId, normalizedDate]
     );
@@ -94,7 +95,7 @@ const sendRemedy = async (data) => {
           ON b.scheduleId = s.id
         INNER JOIN users u
           ON s.doctorId = u.id
-        WHERE b.id = ? ${shouldUpdateBookingStatus ? "AND b.statusId = 'S2'" : ""}
+        WHERE b.id = ? ${shouldUpdateBookingStatus ? "AND b.statusId = 'S8'" : ""}
         LIMIT 1
       `,
       [bookingId]
@@ -112,8 +113,8 @@ const sendRemedy = async (data) => {
       await connection.promise().query(
         `
           UPDATE booking
-          SET statusId = 'S3'
-          WHERE id = ? AND statusId = 'S2'
+          SET statusId = 'S3', statusUpdatedAt = CURRENT_TIMESTAMP
+          WHERE id = ? AND statusId = 'S8'
         `,
         [bookingId]
       );
@@ -171,7 +172,8 @@ const GetListAppointment = async (doctorId) => {
          SELECT b.id, b.scheduleId, b.date, s.timeType, s.appointmentTypeId, b.statusId, b.reason, b.patientId,
                 s.doctorId, bq.queueNumber, bq.appointmentDate AS queueAppointmentDate,
                 u.email, u.firstName, u.lastName, u.address, u.phoneNumber,
-                a.value_vi AS timeTypeVi, a.value_en AS timeTypeEn,
+                COALESCE(a.value_vi, CONCAT(TIME_FORMAT(s.startTime, '%H:%i'), ' - ', TIME_FORMAT(s.endTime, '%H:%i'))) AS timeTypeVi,
+                COALESCE(a.value_en, CONCAT(TIME_FORMAT(s.startTime, '%H:%i'), ' - ', TIME_FORMAT(s.endTime, '%H:%i'))) AS timeTypeEn,
                 appointmentType.value_vi AS appointmentTypeVi,
                 appointmentType.value_en AS appointmentTypeEn,
                 vcs.statusId AS videoSessionStatusId,
@@ -188,7 +190,7 @@ const GetListAppointment = async (doctorId) => {
             LEFT JOIN video_consultation_session AS vcs
                 ON vcs.bookingId = b.id
           WHERE s.doctorId = ?
-          ORDER BY b.date DESC, COALESCE(bq.queueNumber, 999999) ASC, CAST(SUBSTRING(s.timeType, 2) AS UNSIGNED) ASC
+          ORDER BY b.date DESC, COALESCE(bq.queueNumber, 999999) ASC, COALESCE(TIME_TO_SEC(s.startTime), CAST(SUBSTRING(s.timeType, 2) AS UNSIGNED)) ASC
         `,
       [doctorId]
     );
@@ -228,6 +230,10 @@ const ListBooking = async (user) => {
           s.appointmentTypeId,
           b.statusId,
           b.reason,
+          b.cancelReason,
+          b.rejectReason,
+          b.noShowNote,
+          b.statusUpdatedAt,
           b.token,
           bq.queueNumber,
           bq.appointmentDate AS queueAppointmentDate,
@@ -237,8 +243,8 @@ const ListBooking = async (user) => {
           ls.value_vi AS statusVi,
 
           -- Khung giờ khám
-          lt.value_en AS timeEn,
-          lt.value_vi AS timeVi,
+          COALESCE(lt.value_en, CONCAT(TIME_FORMAT(s.startTime, '%H:%i'), ' - ', TIME_FORMAT(s.endTime, '%H:%i'))) AS timeEn,
+          COALESCE(lt.value_vi, CONCAT(TIME_FORMAT(s.startTime, '%H:%i'), ' - ', TIME_FORMAT(s.endTime, '%H:%i'))) AS timeVi,
 
           appointmentType.value_en AS appointmentTypeEn,
           appointmentType.value_vi AS appointmentTypeVi,
@@ -298,23 +304,15 @@ const ListBooking = async (user) => {
           ON vcs.bookingId = b.id
 
       ${scope.whereClause}
-      ORDER BY b.date DESC, COALESCE(bq.queueNumber, 999999) ASC, CAST(SUBSTRING(s.timeType, 2) AS UNSIGNED) ASC
+      ORDER BY b.date DESC, COALESCE(bq.queueNumber, 999999) ASC, COALESCE(TIME_TO_SEC(s.startTime), CAST(SUBSTRING(s.timeType, 2) AS UNSIGNED)) ASC
       `,
       scope.params
     );
 
-    if (!rows || rows.length === 0) {
-      return {
-        errCode: 1,
-        errMessage: "No bookings found",
-        data: [],
-      };
-    }
-
     return {
       errCode: 0,
       errMessage: "OK",
-      data: rows,
+      data: rows || [],
     };
   } catch (error) {
     console.log("ListBooking error:", error);

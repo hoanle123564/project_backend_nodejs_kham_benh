@@ -20,6 +20,12 @@ const {
   getAdminDashboardStatistics
 } = require("../controller/adminController");
 const {
+  getAdminBookings,
+  getDoctorBookings,
+  patchAdminBookingStatus,
+  patchDoctorBookingStatus,
+} = require("../controller/bookingStatusController");
+const {
   getDoctorDashboardStatisticsApi,
 } = require("../controller/doctorDashboardController");
 
@@ -31,6 +37,11 @@ const {
   postInfoDoctor,
   CreateScheduleDoctor,
   GetcheScheduleDoctor,
+  handleGetScheduleRules,
+  handlePreviewScheduleRuleChange,
+  handleCreateScheduleRule,
+  handleUpdateScheduleRule,
+  handleDeleteScheduleRule,
   getListPatientForDoctor,
   postSendRemedy,
   handleUpdateScheduleDoctor,
@@ -85,6 +96,17 @@ const {
   getChatSessionMessages,
   postChatMessage,
 } = require("../controller/chatController");
+const {
+  createFromBooking,
+  getMyChatRooms,
+  getChatRoomMessages,
+  postChatRoomMessage,
+  patchChatRoomRead,
+} = require("../controller/chatRoomController");
+const {
+  getMyDoctorNotifications,
+  markMyDoctorNotificationsRead,
+} = require("../controller/doctorNotificationController");
 
 // specialty controller
 const {
@@ -159,6 +181,8 @@ router.get("/api/lookup", getLookUp);
 // admin routes
 router.get("/api/admin/dashboard-statistics", authMiddleware, adminMiddleware, getAdminDashboardStatistics);
 router.get("/api/admin/medical-records", authMiddleware, adminMiddleware, getAdminMedicalRecordsApi);
+router.get("/api/admin/bookings", authMiddleware, adminMiddleware, getAdminBookings);
+router.patch("/api/admin/bookings/:bookingId/status", authMiddleware, adminMiddleware, patchAdminBookingStatus);
 
 // doctor routes
 router.get("/api/top-doctor", getTopDoctor);
@@ -167,6 +191,11 @@ router.get("/api/detail-doctor", getDetailDoctor);
 router.post("/api/save-doctor", authMiddleware, postInfoDoctor);
 router.post("/api/create-schedule-doctor", authMiddleware, CreateScheduleDoctor);
 router.get("/api/get-schedule-doctor", GetcheScheduleDoctor);
+router.get("/api/doctor-schedule/rules", authMiddleware, handleGetScheduleRules);
+router.post("/api/doctor-schedule/rules/preview", authMiddleware, handlePreviewScheduleRuleChange);
+router.post("/api/doctor-schedule/rules", authMiddleware, handleCreateScheduleRule);
+router.put("/api/doctor-schedule/rules/:id", authMiddleware, handleUpdateScheduleRule);
+router.delete("/api/doctor-schedule/rules/:id", authMiddleware, handleDeleteScheduleRule);
 router.put("/api/update-schedule-doctor", authMiddleware, handleUpdateScheduleDoctor);
 router.get("/api/get-list-patient-for-doctor", authMiddleware, getListPatientForDoctor);
 router.get("/api/doctor/patients", authMiddleware, getDoctorPatients);
@@ -176,6 +205,8 @@ router.get("/api/doctor/queue", authMiddleware, getDoctorQueueApi);
 router.get("/api/doctor/appointment-detail", authMiddleware, getDoctorAppointmentDetailApi);
 router.get("/api/doctor/medical-records", authMiddleware, getDoctorMedicalRecordsApi);
 router.get("/api/doctor/dashboard-statistics", authMiddleware, getDoctorDashboardStatisticsApi);
+router.get("/api/doctor/bookings", authMiddleware, getDoctorBookings);
+router.patch("/api/doctor/bookings/:bookingId/status", authMiddleware, patchDoctorBookingStatus);
 router.post("/api/doctor/examination-visit", authMiddleware, ensureDoctorExaminationVisit);
 router.get("/api/doctor/examination-visit-detail", authMiddleware, getDoctorExaminationVisitDetail);
 router.post("/api/doctor/medical-record", authMiddleware, ensureDoctorMedicalRecord);
@@ -215,6 +246,16 @@ router.get("/api/chat/sessions", authMiddleware, getChatSessionList);
 router.post("/api/chat/sessions", authMiddleware, postChatSession);
 router.get("/api/chat/sessions/:sessionId/messages", authMiddleware, getChatSessionMessages);
 router.post("/api/chat/message", authMiddleware, postChatMessage);
+
+// doctor-patient chat room routes
+router.post("/api/chat-rooms/create-from-booking", authMiddleware, createFromBooking);
+router.get("/api/chat-rooms/my-rooms", authMiddleware, getMyChatRooms);
+router.get("/api/chat-rooms/:roomId/messages", authMiddleware, getChatRoomMessages);
+router.post("/api/chat-rooms/:roomId/messages", authMiddleware, postChatRoomMessage);
+router.patch("/api/chat-rooms/:roomId/read", authMiddleware, patchChatRoomRead);
+router.get("/api/doctor/notifications", authMiddleware, getMyDoctorNotifications);
+router.patch("/api/doctor/notifications/read", authMiddleware, markMyDoctorNotificationsRead);
+router.patch("/api/doctor/notifications/:notificationId/read", authMiddleware, markMyDoctorNotificationsRead);
 
 
 // specialty routes

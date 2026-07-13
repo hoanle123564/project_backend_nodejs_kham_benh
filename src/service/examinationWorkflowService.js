@@ -231,7 +231,7 @@ const requireBookingVisitContext = async (bookingId, db) => {
     throw error;
   }
 
-  if (context.bookingStatusId !== BOOKING_STATUS.CONFIRMED) {
+  if (context.bookingStatusId !== BOOKING_STATUS.DOCTOR_CONFIRMED) {
     const error = new Error("Booking is not confirmed");
     error.errCode = 3;
     throw error;
@@ -1138,10 +1138,10 @@ const markBookingCompletedForVisitInCurrentTransaction = async (context, db) => 
   await db.query(
     `
       UPDATE booking
-      SET statusId = ?
+      SET statusId = ?, statusUpdatedAt = CURRENT_TIMESTAMP
       WHERE id = ? AND statusId = ?
     `,
-    [BOOKING_STATUS.COMPLETED, context.bookingId, BOOKING_STATUS.CONFIRMED]
+    [BOOKING_STATUS.COMPLETED, context.bookingId, BOOKING_STATUS.DOCTOR_CONFIRMED]
   );
   await markVideoSessionEndedForBookingInCurrentTransaction(context.bookingId, db);
 };

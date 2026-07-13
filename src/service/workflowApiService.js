@@ -24,13 +24,17 @@ const { canDoctorOpenVideoBooking } = require("./videoConsultationService");
 const VALID_DOCTOR_PATIENT_BOOKING_STATUSES = Object.freeze([
   BOOKING_STATUS.PENDING,
   BOOKING_STATUS.CONFIRMED,
+  BOOKING_STATUS.DOCTOR_CONFIRMED,
   BOOKING_STATUS.COMPLETED,
 ]);
+const DOCTOR_PATIENT_STATUS_PLACEHOLDERS = VALID_DOCTOR_PATIENT_BOOKING_STATUSES
+  .map(() => "?")
+  .join(", ");
 
 const ACTIVE_QUEUE_BOOKING_STATUSES = Object.freeze([
-  BOOKING_STATUS.PENDING,
-  BOOKING_STATUS.CONFIRMED,
+  BOOKING_STATUS.DOCTOR_CONFIRMED,
   BOOKING_STATUS.COMPLETED,
+  BOOKING_STATUS.PATIENT_NO_SHOW,
 ]);
 
 // Chuẩn hóa id bắt buộc và báo lỗi nếu thiếu hoặc không hợp lệ.
@@ -127,7 +131,7 @@ const assertDoctorPatientRelationship = async (doctorId, patientId) => {
         ON s.id = b.scheduleId
       WHERE s.doctorId = ?
         AND b.patientId = ?
-        AND b.statusId IN (?, ?, ?)
+        AND b.statusId IN (${DOCTOR_PATIENT_STATUS_PLACEHOLDERS})
     `,
     [
       normalizedDoctorId,
@@ -183,7 +187,7 @@ const getDoctorPatientList = async (query) => {
         ON ev.bookingId = b.id
        AND ev.statusId IN (?, ?)
       WHERE s.doctorId = ?
-        AND b.statusId IN (?, ?, ?)
+        AND b.statusId IN (${DOCTOR_PATIENT_STATUS_PLACEHOLDERS})
         ${searchClause}
       GROUP BY
         u.id,
@@ -300,7 +304,7 @@ const getDoctorPatientDetail = async (query) => {
         WHERE u.id = ?
           AND u.roleId = 'R3'
           AND s.doctorId = ?
-          AND b.statusId IN (?, ?, ?)
+          AND b.statusId IN (${DOCTOR_PATIENT_STATUS_PLACEHOLDERS})
         GROUP BY
           u.id,
           u.email,
@@ -364,8 +368,8 @@ const getDoctorPatientHistory = async (query) => {
           b.priceAtBooking,
           s.timeType,
           s.appointmentTypeId,
-          lt.value_vi AS timeTypeVi,
-          lt.value_en AS timeTypeEn,
+          COALESCE(lt.value_vi, CONCAT(TIME_FORMAT(s.startTime, '%H:%i'), ' - ', TIME_FORMAT(s.endTime, '%H:%i'))) AS timeTypeVi,
+          COALESCE(lt.value_en, CONCAT(TIME_FORMAT(s.startTime, '%H:%i'), ' - ', TIME_FORMAT(s.endTime, '%H:%i'))) AS timeTypeEn,
           lat.value_vi AS appointmentTypeVi,
           lat.value_en AS appointmentTypeEn,
           bq.queueNumber,
@@ -398,7 +402,7 @@ const getDoctorPatientHistory = async (query) => {
           ON pr.medicalRecordId = mr.id
         WHERE s.doctorId = ?
           AND b.patientId = ?
-          AND b.statusId IN (?, ?, ?)
+          AND b.statusId IN (${DOCTOR_PATIENT_STATUS_PLACEHOLDERS})
         GROUP BY
           b.id,
           b.date,
@@ -453,6 +457,10 @@ const getDoctorQueue = async (query) => {
     if (visitStatusId) {
       filters.push("COALESCE(ev.statusId, ?) = ?");
       params.push(VISIT_STATUS.WAITING, visitStatusId);
+      if (visitStatusId === VISIT_STATUS.WAITING) {
+        filters.push("b.statusId <> ?");
+        params.push(BOOKING_STATUS.PATIENT_NO_SHOW);
+      }
     }
 
     if (paymentStatusId) {
@@ -479,8 +487,8 @@ const getDoctorQueue = async (query) => {
           b.priceAtBooking,
           s.timeType,
           s.appointmentTypeId,
-          lt.value_vi AS timeTypeVi,
-          lt.value_en AS timeTypeEn,
+          COALESCE(lt.value_vi, CONCAT(TIME_FORMAT(s.startTime, '%H:%i'), ' - ', TIME_FORMAT(s.endTime, '%H:%i'))) AS timeTypeVi,
+          COALESCE(lt.value_en, CONCAT(TIME_FORMAT(s.startTime, '%H:%i'), ' - ', TIME_FORMAT(s.endTime, '%H:%i'))) AS timeTypeEn,
           lat.value_vi AS appointmentTypeVi,
           lat.value_en AS appointmentTypeEn,
           bq.queueNumber,
@@ -535,7 +543,7 @@ const getDoctorQueue = async (query) => {
           AND b.date = ?
           AND b.statusId IN (?, ?, ?)
           ${filters.length > 0 ? `AND ${filters.join(" AND ")}` : ""}
-        ORDER BY bq.queueNumber ASC, CAST(SUBSTRING(s.timeType, 2) AS UNSIGNED) ASC
+        ORDER BY bq.queueNumber ASC, COALESCE(TIME_TO_SEC(s.startTime), CAST(SUBSTRING(s.timeType, 2) AS UNSIGNED)) ASC
       `,
       params
     );
@@ -567,8 +575,8 @@ const getDoctorAppointmentDetail = async (query) => {
           b.priceAtBooking,
           s.timeType,
           s.appointmentTypeId,
-          lt.value_vi AS timeTypeVi,
-          lt.value_en AS timeTypeEn,
+          COALESCE(lt.value_vi, CONCAT(TIME_FORMAT(s.startTime, '%H:%i'), ' - ', TIME_FORMAT(s.endTime, '%H:%i'))) AS timeTypeVi,
+          COALESCE(lt.value_en, CONCAT(TIME_FORMAT(s.startTime, '%H:%i'), ' - ', TIME_FORMAT(s.endTime, '%H:%i'))) AS timeTypeEn,
           lat.value_vi AS appointmentTypeVi,
           lat.value_en AS appointmentTypeEn,
           bq.queueNumber,
@@ -770,8 +778,8 @@ const getDoctorMedicalRecordList = async (query, options = {}) => {
           b.reason,
           b.priceAtBooking,
           s.timeType,
-          lt.value_vi AS timeTypeVi,
-          lt.value_en AS timeTypeEn,
+          COALESCE(lt.value_vi, CONCAT(TIME_FORMAT(s.startTime, '%H:%i'), ' - ', TIME_FORMAT(s.endTime, '%H:%i'))) AS timeTypeVi,
+          COALESCE(lt.value_en, CONCAT(TIME_FORMAT(s.startTime, '%H:%i'), ' - ', TIME_FORMAT(s.endTime, '%H:%i'))) AS timeTypeEn,
           CONCAT_WS(' ', patient.firstName, patient.lastName) AS patientName,
           patient.email AS patientEmail,
           patient.firstName AS patientFirstName,
@@ -849,8 +857,8 @@ const getExaminationVisitDetail = async (query) => {
           b.priceAtBooking,
           s.timeType,
           s.appointmentTypeId,
-          lt.value_vi AS timeTypeVi,
-          lt.value_en AS timeTypeEn,
+          COALESCE(lt.value_vi, CONCAT(TIME_FORMAT(s.startTime, '%H:%i'), ' - ', TIME_FORMAT(s.endTime, '%H:%i'))) AS timeTypeVi,
+          COALESCE(lt.value_en, CONCAT(TIME_FORMAT(s.startTime, '%H:%i'), ' - ', TIME_FORMAT(s.endTime, '%H:%i'))) AS timeTypeEn,
           lat.value_vi AS appointmentTypeVi,
           lat.value_en AS appointmentTypeEn,
           patient.email AS patientEmail,
@@ -950,8 +958,8 @@ const getMedicalRecordDetail = async (query) => {
           b.reason,
           b.priceAtBooking,
           s.timeType,
-          lt.value_vi AS timeTypeVi,
-          lt.value_en AS timeTypeEn,
+          COALESCE(lt.value_vi, CONCAT(TIME_FORMAT(s.startTime, '%H:%i'), ' - ', TIME_FORMAT(s.endTime, '%H:%i'))) AS timeTypeVi,
+          COALESCE(lt.value_en, CONCAT(TIME_FORMAT(s.startTime, '%H:%i'), ' - ', TIME_FORMAT(s.endTime, '%H:%i'))) AS timeTypeEn,
           patient.email AS patientEmail,
           patient.firstName AS currentPatientFirstName,
           patient.lastName AS currentPatientLastName,

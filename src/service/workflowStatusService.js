@@ -11,8 +11,13 @@ const LOOKUP_TYPES = Object.freeze({
 const BOOKING_STATUS = Object.freeze({
   PENDING: "S1",
   CONFIRMED: "S2",
+  DOCTOR_CONFIRMED: "S8",
   COMPLETED: "S3",
   CANCELLED: "S4",
+  CANCELLED_BY_PATIENT: "S4",
+  CANCELLED_BY_DOCTOR: "S5",
+  REJECTED_BY_DOCTOR: "S6",
+  PATIENT_NO_SHOW: "S7",
 });
 
 const VISIT_STATUS = Object.freeze({
