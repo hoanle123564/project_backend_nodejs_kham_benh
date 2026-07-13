@@ -169,31 +169,82 @@ CREATE TABLE IF NOT EXISTS `schedule` (
   `id` int NOT NULL AUTO_INCREMENT,
   `doctorId` int NOT NULL COMMENT 'FK to users.id',
   `date` date NOT NULL,
-  `timeType` varchar(10) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT 'Tham chiếu lookup.keyMap với type=TIME (T1-T8)',
+  `timeType` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'Legacy lookup.keyMap type=TIME or generated display key',
+  `startTime` time DEFAULT NULL,
+  `endTime` time DEFAULT NULL,
   `appointmentTypeId` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT 'AT1' COMMENT 'AT1=Kham tai phong kham, AT2=Kham online/video',
   `price` int DEFAULT NULL COMMENT 'Gia kham cu the cua ca lich, null thi dung gia mac dinh cua bac si',
+  `capacity` int NOT NULL DEFAULT '1',
+  `isActive` tinyint(1) NOT NULL DEFAULT '1',
+  `sourceType` varchar(20) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'LEGACY' COMMENT 'LEGACY, FIXED, FLEXIBLE',
+  `sourceRuleId` int DEFAULT NULL,
+  `minBookingNoticeDays` int NOT NULL DEFAULT '0',
+  `maxBookingAheadDays` int NOT NULL DEFAULT '30',
+  `discountPercent` decimal(5,2) NOT NULL DEFAULT '0.00',
   `createdAt` datetime NULL DEFAULT CURRENT_TIMESTAMP,
   `updatedAt` datetime NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
-  UNIQUE KEY `unique_schedule` (`doctorId`,`date`,`timeType`),
+  UNIQUE KEY `unique_schedule_logical_slot` (`doctorId`,`date`,`appointmentTypeId`,`startTime`,`endTime`),
   KEY `idx_doctorId` (`doctorId`),
   KEY `idx_date` (`date`),
   KEY `idx_doctorId_date` (`doctorId`,`date`),
   KEY `idx_schedule_appointment_type` (`appointmentTypeId`),
-  CONSTRAINT `fk_schedule_doctor` FOREIGN KEY (`doctorId`) REFERENCES `users` (`id`) ON DELETE CASCADE ON UPDATE CASCADE
+  KEY `idx_schedule_active_slot` (`doctorId`,`date`,`appointmentTypeId`,`isActive`,`startTime`),
+  KEY `idx_schedule_source_rule` (`sourceRuleId`,`sourceType`),
+  CONSTRAINT `fk_schedule_doctor` FOREIGN KEY (`doctorId`) REFERENCES `users` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE
 ) ENGINE=InnoDB;
 
 -- =====================================================
+-- BẢNG 7A: DOCTOR_SCHEDULE_RULE (Luật lịch làm việc)
+-- =====================================================
+CREATE TABLE IF NOT EXISTS `doctor_schedule_rule` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `doctorId` int NOT NULL,
+  `ruleType` varchar(20) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT 'FIXED, OFF, FLEXIBLE',
+  `weekday` tinyint DEFAULT NULL COMMENT '1=Monday, 7=Sunday; used by FIXED',
+  `date` date DEFAULT NULL COMMENT 'Used by OFF and FLEXIBLE',
+  `appointmentTypeId` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'AT1/AT2; NULL OFF applies to all types',
+  `startTime` time NOT NULL,
+  `endTime` time NOT NULL,
+  `slotDurationMinutes` int DEFAULT NULL,
+  `capacity` int DEFAULT NULL,
+  `minBookingNoticeDays` int NOT NULL DEFAULT '0',
+  `maxBookingAheadDays` int NOT NULL DEFAULT '30',
+  `price` int DEFAULT NULL,
+  `discountPercent` decimal(5,2) NOT NULL DEFAULT '0.00',
+  `isFullDay` tinyint(1) NOT NULL DEFAULT '0',
+  `isActive` tinyint(1) NOT NULL DEFAULT '1',
+  `createdBy` int DEFAULT NULL,
+  `createdAt` datetime NULL DEFAULT CURRENT_TIMESTAMP,
+  `updatedAt` datetime NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_schedule_rule_doctor_type` (`doctorId`,`ruleType`,`isActive`),
+  KEY `idx_schedule_rule_date` (`doctorId`,`date`,`appointmentTypeId`,`isActive`),
+  KEY `idx_schedule_rule_weekday` (`doctorId`,`weekday`,`appointmentTypeId`,`isActive`),
+  CONSTRAINT `fk_schedule_rule_doctor` FOREIGN KEY (`doctorId`) REFERENCES `users` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE,
+  CONSTRAINT `fk_schedule_rule_created_by` FOREIGN KEY (`createdBy`) REFERENCES `users` (`id`) ON DELETE SET NULL ON UPDATE CASCADE
+) ENGINE=InnoDB;
+
+ALTER TABLE `schedule`
+  ADD CONSTRAINT `fk_schedule_source_rule`
+  FOREIGN KEY (`sourceRuleId`) REFERENCES `doctor_schedule_rule` (`id`)
+  ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- =====================================================
 -- BẢNG 8: BOOKING (Đặt lịch khám)
--- statusId: S1=Chờ xác nhận, S2=Đã xác nhận, S3=Đã khám, S4=Đã hủy
+-- statusId: S1=Chờ bệnh nhân xác nhận, S2=Bệnh nhân đã xác nhận, S8=Bác sĩ đã xác nhận, S3-S7=trạng thái kết thúc
 -- =====================================================
 CREATE TABLE IF NOT EXISTS `booking` (
   `id` int NOT NULL AUTO_INCREMENT,
-  `statusId` varchar(10) COLLATE utf8mb4_unicode_ci DEFAULT 'S1' COMMENT 'S1=Chờ xác nhận, S2=Đã xác nhận, S3=Đã khám, S4=Đã hủy',
+  `statusId` varchar(10) COLLATE utf8mb4_unicode_ci DEFAULT 'S1' COMMENT 'Tham chiếu lookup STATUS: S1-S8',
   `patientId` int NOT NULL COMMENT 'FK to users.id (Patient)',
   `scheduleId` int NOT NULL,
   `date` date NOT NULL,
   `reason` text COLLATE utf8mb4_unicode_ci COMMENT 'Lý do khám',
+  `cancelReason` text COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `rejectReason` text COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `noShowNote` text COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `statusUpdatedAt` datetime DEFAULT NULL,
   `token` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'Token xác nhận email',
   `priceAtBooking` int DEFAULT '0',
   `paymentMethodId` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'Phương thức thanh toán bệnh nhân chọn lúc đặt lịch',
@@ -285,6 +336,64 @@ CREATE TABLE IF NOT EXISTS `chat_messages` (
   `updatedAt` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   KEY `idx_chat_messages_session_created` (`chatSessionId`, `createdAt`),
   CONSTRAINT `fk_chat_messages_session` FOREIGN KEY (`chatSessionId`) REFERENCES `chat_sessions` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+-- =====================================================
+-- BANG 8E: CHAT_ROOMS (Phong chat bac si - benh nhan theo booking online)
+-- =====================================================
+CREATE TABLE IF NOT EXISTS `chat_rooms` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `bookingId` int NOT NULL,
+  `doctorId` int NOT NULL,
+  `patientId` int NOT NULL,
+  `status` varchar(20) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'ACTIVE' COMMENT 'ACTIVE, CLOSED, DISABLED',
+  `createdAt` datetime NULL DEFAULT CURRENT_TIMESTAMP,
+  `updatedAt` datetime NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `unique_chat_room_booking` (`bookingId`),
+  KEY `idx_chat_rooms_doctor` (`doctorId`),
+  KEY `idx_chat_rooms_patient` (`patientId`),
+  KEY `idx_chat_rooms_status` (`status`),
+  CONSTRAINT `fk_chat_rooms_booking` FOREIGN KEY (`bookingId`) REFERENCES `booking` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE,
+  CONSTRAINT `fk_chat_rooms_doctor` FOREIGN KEY (`doctorId`) REFERENCES `users` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE,
+  CONSTRAINT `fk_chat_rooms_patient` FOREIGN KEY (`patientId`) REFERENCES `users` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE
+) ENGINE=InnoDB;
+
+-- =====================================================
+-- BANG 8F: CHAT_ROOM_MESSAGES (Tin nhan trong phong doctor-patient)
+-- =====================================================
+CREATE TABLE IF NOT EXISTS `chat_room_messages` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `roomId` int NOT NULL,
+  `senderId` int NOT NULL,
+  `message` text COLLATE utf8mb4_unicode_ci NOT NULL,
+  `messageType` varchar(20) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'TEXT',
+  `isRead` tinyint(1) NOT NULL DEFAULT '0',
+  `createdAt` datetime NULL DEFAULT CURRENT_TIMESTAMP,
+  `updatedAt` datetime NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_chat_room_messages_room_created` (`roomId`, `createdAt`, `id`),
+  KEY `idx_chat_room_messages_sender` (`senderId`),
+  KEY `idx_chat_room_messages_unread` (`roomId`, `senderId`, `isRead`),
+  CONSTRAINT `fk_chat_room_messages_room` FOREIGN KEY (`roomId`) REFERENCES `chat_rooms` (`id`) ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT `fk_chat_room_messages_sender` FOREIGN KEY (`senderId`) REFERENCES `users` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS `doctor_notifications` (
+  `id` INT AUTO_INCREMENT PRIMARY KEY,
+  `doctorId` INT NOT NULL,
+  `bookingId` INT NOT NULL,
+  `chatRoomId` INT DEFAULT NULL,
+  `sourceMessageId` INT DEFAULT NULL,
+  `type` VARCHAR(30) NOT NULL COMMENT 'NEW_BOOKING, NEW_MESSAGE',
+  `content` VARCHAR(500) DEFAULT NULL,
+  `isRead` TINYINT(1) NOT NULL DEFAULT 0,
+  `readAt` DATETIME DEFAULT NULL,
+  `createdAt` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY `unique_doctor_notification_message` (`sourceMessageId`),
+  KEY `idx_doctor_notification_feed` (`doctorId`, `isRead`, `createdAt`),
+  CONSTRAINT `fk_doctor_notification_doctor` FOREIGN KEY (`doctorId`) REFERENCES `users` (`id`) ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT `fk_doctor_notification_booking` FOREIGN KEY (`bookingId`) REFERENCES `booking` (`id`) ON DELETE CASCADE ON UPDATE CASCADE
 ) ENGINE=InnoDB;
 
 -- =====================================================
@@ -582,39 +691,39 @@ INSERT IGNORE INTO `lookup` (`keyMap`, `type`, `value_vi`, `value_en`) VALUES
 ('CT1', 'CLINIC_TYPE', 'Phòng khám', 'Clinic'),
 ('CT2', 'CLINIC_TYPE', 'Bệnh viện', 'Hospital');
 
--- Thời gian khám
-INSERT IGNORE INTO `lookup` (`keyMap`, `type`, `value_vi`, `value_en`) VALUES
--- Sáng
-('T1', 'TIME', '08:00 - 08:30', '8:00 AM - 8:30 AM'),
-('T2', 'TIME', '08:30 - 09:00', '8:30 AM - 9:00 AM'),
-('T3', 'TIME', '09:00 - 09:30', '9:00 AM - 9:30 AM'),
-('T4', 'TIME', '09:30 - 10:00', '9:30 AM - 10:00 AM'),
-('T5', 'TIME', '10:00 - 10:30', '10:00 AM - 10:30 AM'),
-('T6', 'TIME', '10:30 - 11:00', '10:30 AM - 11:00 AM'),
-('T7', 'TIME', '11:00 - 11:30', '11:00 AM - 11:30 AM'),
-('T8', 'TIME', '11:30 - 12:00', '11:30 AM - 12:00 PM'),
--- Chiều
-('T9', 'TIME', '12:00 - 12:30', '12:00 PM - 12:30 PM'),
-('T10', 'TIME', '12:30 - 13:00', '12:30 PM - 1:00 PM'),
-('T11', 'TIME', '13:00 - 13:30', '1:00 PM - 1:30 PM'),
-('T12', 'TIME', '13:30 - 14:00', '1:30 PM - 2:00 PM'),
-('T13', 'TIME', '14:00 - 14:30', '2:00 PM - 2:30 PM'),
-('T14', 'TIME', '14:30 - 15:00', '2:30 PM - 3:00 PM'),
-('T15', 'TIME', '15:00 - 15:30', '3:00 PM - 3:30 PM'),
-('T16', 'TIME', '15:30 - 16:00', '3:30 PM - 4:00 PM'),
-('T17', 'TIME', '16:00 - 16:30', '4:00 PM - 4:30 PM'),
-('T18', 'TIME', '16:30 - 17:00', '4:30 PM - 5:00 PM'),
-('T19', 'TIME', '17:00 - 17:30', '5:00 PM - 5:30 PM'),
-('T20', 'TIME', '17:30 - 18:00', '5:30 PM - 6:00 PM'),
--- Tối
-('T21', 'TIME', '18:00 - 18:30', '6:00 PM - 6:30 PM'),
-('T22', 'TIME', '18:30 - 19:00', '6:30 PM - 7:00 PM'),
-('T23', 'TIME', '19:00 - 19:30', '7:00 PM - 7:30 PM'),
-('T24', 'TIME', '19:30 - 20:00', '7:30 PM - 8:00 PM'),
-('T25', 'TIME', '20:00 - 20:30', '8:00 PM - 8:30 PM'),
-('T26', 'TIME', '20:30 - 21:00', '8:30 PM - 9:00 PM'),
-('T27', 'TIME', '21:00 - 21:30', '9:00 PM - 9:30 PM'),
-('T28', 'TIME', '21:30 - 22:00', '9:30 PM - 10:00 PM');
+-- -- Thời gian khám
+-- INSERT IGNORE INTO `lookup` (`keyMap`, `type`, `value_vi`, `value_en`) VALUES
+-- -- Sáng
+-- ('T1', 'TIME', '08:00 - 08:30', '8:00 AM - 8:30 AM'),
+-- ('T2', 'TIME', '08:30 - 09:00', '8:30 AM - 9:00 AM'),
+-- ('T3', 'TIME', '09:00 - 09:30', '9:00 AM - 9:30 AM'),
+-- ('T4', 'TIME', '09:30 - 10:00', '9:30 AM - 10:00 AM'),
+-- ('T5', 'TIME', '10:00 - 10:30', '10:00 AM - 10:30 AM'),
+-- ('T6', 'TIME', '10:30 - 11:00', '10:30 AM - 11:00 AM'),
+-- ('T7', 'TIME', '11:00 - 11:30', '11:00 AM - 11:30 AM'),
+-- ('T8', 'TIME', '11:30 - 12:00', '11:30 AM - 12:00 PM'),
+-- -- Chiều
+-- ('T9', 'TIME', '12:00 - 12:30', '12:00 PM - 12:30 PM'),
+-- ('T10', 'TIME', '12:30 - 13:00', '12:30 PM - 1:00 PM'),
+-- ('T11', 'TIME', '13:00 - 13:30', '1:00 PM - 1:30 PM'),
+-- ('T12', 'TIME', '13:30 - 14:00', '1:30 PM - 2:00 PM'),
+-- ('T13', 'TIME', '14:00 - 14:30', '2:00 PM - 2:30 PM'),
+-- ('T14', 'TIME', '14:30 - 15:00', '2:30 PM - 3:00 PM'),
+-- ('T15', 'TIME', '15:00 - 15:30', '3:00 PM - 3:30 PM'),
+-- ('T16', 'TIME', '15:30 - 16:00', '3:30 PM - 4:00 PM'),
+-- ('T17', 'TIME', '16:00 - 16:30', '4:00 PM - 4:30 PM'),
+-- ('T18', 'TIME', '16:30 - 17:00', '4:30 PM - 5:00 PM'),
+-- ('T19', 'TIME', '17:00 - 17:30', '5:00 PM - 5:30 PM'),
+-- ('T20', 'TIME', '17:30 - 18:00', '5:30 PM - 6:00 PM'),
+-- -- Tối
+-- ('T21', 'TIME', '18:00 - 18:30', '6:00 PM - 6:30 PM'),
+-- ('T22', 'TIME', '18:30 - 19:00', '6:30 PM - 7:00 PM'),
+-- ('T23', 'TIME', '19:00 - 19:30', '7:00 PM - 7:30 PM'),
+-- ('T24', 'TIME', '19:30 - 20:00', '7:30 PM - 8:00 PM'),
+-- ('T25', 'TIME', '20:00 - 20:30', '8:00 PM - 8:30 PM'),
+-- ('T26', 'TIME', '20:30 - 21:00', '8:30 PM - 9:00 PM'),
+-- ('T27', 'TIME', '21:00 - 21:30', '9:00 PM - 9:30 PM'),
+-- ('T28', 'TIME', '21:30 - 22:00', '9:30 PM - 10:00 PM');
 
 -- APPOINTMENT_TYPE (Hinh thuc kham)
 INSERT IGNORE INTO `lookup` (`keyMap`, `type`, `value_vi`, `value_en`) VALUES
@@ -623,10 +732,14 @@ INSERT IGNORE INTO `lookup` (`keyMap`, `type`, `value_vi`, `value_en`) VALUES
 
 -- STATUS (Trạng thái đặt lịch)
 INSERT IGNORE INTO `lookup` (`keyMap`, `type`, `value_vi`, `value_en`) VALUES
-('S1', 'STATUS', 'Chờ xác nhận', 'Pending'),
-('S2', 'STATUS', 'Đã xác nhận', 'Confirmed'),
+('S1', 'STATUS', 'Chờ bệnh nhân xác nhận', 'Waiting for patient confirmation'),
+('S2', 'STATUS', 'Bệnh nhân đã xác nhận', 'Confirmed by patient'),
 ('S3', 'STATUS', 'Đã khám xong', 'Completed'),
-('S4', 'STATUS', 'Đã hủy', 'Cancelled');
+('S4', 'STATUS', 'Bệnh nhân hủy lịch', 'Cancelled by patient'),
+('S5', 'STATUS', 'Bác sĩ hủy lịch', 'Cancelled by doctor'),
+('S6', 'STATUS', 'Bác sĩ từ chối lịch khám', 'Rejected by doctor'),
+('S7', 'STATUS', 'Bệnh nhân không đến', 'Patient no-show'),
+('S8', 'STATUS', 'Bác sĩ đã xác nhận khám', 'Confirmed by doctor');
 
 -- VISIT_STATUS (Trạng thái lượt khám)
 INSERT IGNORE INTO `lookup` (`keyMap`, `type`, `value_vi`, `value_en`) VALUES
