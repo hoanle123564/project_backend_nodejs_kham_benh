@@ -7,12 +7,23 @@ const { sendSimpleEmail } = require("./emailService");
 const { ensurePriceAtBookingColumn, getSchedulePriceAtBooking } = require("./adminDashboardService");
 const { withTransaction } = require("./transactionService");
 const { assignBookingQueueNumberInCurrentTransaction } = require("./bookingQueueService");
+const { createDoctorNotification } = require("./doctorNotificationService");
 const {
-  APPOINTMENT_TYPE_ONLINE,
-  VIDEO_STATUS_IN_CALL,
+  buildCapacitySummary,
+  getCapacityExcludedStatusIds,
+  updateBookingStatus,
+} = require("./bookingStatusService");
+const {
+  isDateInBookingWindow,
+  isScheduleStarted,
+  normalizeDate,
+} = require("./doctor/doctorSchedulePolicy");
+const {
   canPatientJoinVideoBooking,
-  markVideoSessionCancelledForBooking,
 } = require("./videoConsultationService");
+
+const CAPACITY_EXCLUDED_STATUS_IDS = getCapacityExcludedStatusIds();
+const activeStatusPlaceholders = () => CAPACITY_EXCLUDED_STATUS_IDS.map(() => "?").join(", ");
 
 // Tạo link xác nhận lịch gửi qua email cho bệnh nhân.
 const buildUrlEmail = (scheduleId, token) => {
@@ -28,7 +39,13 @@ const getScheduleMeta = async (scheduleId) => {
         s.doctorId,
         s.date,
         s.timeType,
+        s.startTime,
+        s.endTime,
         s.appointmentTypeId,
+        COALESCE(s.capacity, 1) AS capacity,
+        COALESCE(s.isActive, 1) AS isActive,
+        COALESCE(s.minBookingNoticeDays, 0) AS minBookingNoticeDays,
+        COALESCE(s.maxBookingAheadDays, 30) AS maxBookingAheadDays,
         u.firstName,
         u.lastName
       FROM schedule s
@@ -44,10 +61,23 @@ const getScheduleMeta = async (scheduleId) => {
 };
 
 // Khóa lịch trong transaction rồi kiểm tra booking chưa hủy để tránh đặt trùng slot.
-const getScheduleOccupancyInCurrentTransaction = async (scheduleId, db) => {
+const getScheduleAvailabilityInCurrentTransaction = async (scheduleId, db) => {
   const [scheduleRows] = await db.query(
     `
-      SELECT id
+      SELECT
+        id,
+        doctorId,
+        date,
+        timeType,
+        startTime,
+        endTime,
+        appointmentTypeId,
+        COALESCE(capacity, 1) AS capacity,
+        COALESCE(isActive, 1) AS isActive,
+        COALESCE(minBookingNoticeDays, 0) AS minBookingNoticeDays,
+        COALESCE(maxBookingAheadDays, 30) AS maxBookingAheadDays,
+        price,
+        discountPercent
       FROM schedule
       WHERE id = ?
       LIMIT 1
@@ -65,15 +95,15 @@ const getScheduleOccupancyInCurrentTransaction = async (scheduleId, db) => {
       SELECT COUNT(*) AS bookedCount
       FROM booking
       WHERE scheduleId = ?
-        AND statusId <> 'S4'
+        AND statusId NOT IN (${activeStatusPlaceholders()})
     `,
-    [scheduleId]
+    [scheduleId, ...CAPACITY_EXCLUDED_STATUS_IDS]
   );
   const bookedCount = Number(bookingRows[0]?.bookedCount) || 0;
 
   return {
-    bookedCount,
-    hasActiveBooking: bookedCount > 0 ? 1 : 0,
+    ...scheduleRows[0],
+    ...buildCapacitySummary(bookedCount, scheduleRows[0].capacity),
   };
 };
 
@@ -142,7 +172,6 @@ const bookAppointment = async (data) => {
       gender,
       phoneNumber,
       scheduleId,
-      date,
       reason,
       timeString,
       patientId
@@ -156,24 +185,36 @@ const bookAppointment = async (data) => {
       };
     }
 
-    const bookingDate = moment(date, ["DD/MM/YYYY", moment.ISO_8601]).format("YYYY-MM-DD");
     const token = uuidv4();
     await ensurePriceAtBookingColumn();
-    const priceAtBooking = await getSchedulePriceAtBooking(
-      scheduleId,
-      scheduleMeta.doctorId,
-      scheduleMeta.appointmentTypeId
-    );
 
     // Gói tạo/cập nhật bệnh nhân, chống đặt trùng và cấp queue trong một transaction.
     const bookingResult = await withTransaction(async (db) => {
-      const occupancy = await getScheduleOccupancyInCurrentTransaction(scheduleId, db);
-      if (!occupancy) {
+      const availability = await getScheduleAvailabilityInCurrentTransaction(scheduleId, db);
+      if (!availability) {
         return { missingSchedule: true };
       }
 
-      if (occupancy.hasActiveBooking === 1) {
+      if (Number(availability.isActive) !== 1) {
+        return { inactiveSchedule: true };
+      }
+
+      if (availability.remaining <= 0) {
         return { booked: true };
+      }
+
+      if (isScheduleStarted(availability)) {
+        return { scheduleStarted: true };
+      }
+
+      if (
+        !isDateInBookingWindow(
+          availability.date,
+          availability.minBookingNoticeDays,
+          availability.maxBookingAheadDays
+        )
+      ) {
+        return { outsideBookingWindow: true };
       }
 
       const realPatientId = await resolvePatientId({
@@ -187,11 +228,19 @@ const bookAppointment = async (data) => {
       }, db);
 
       // Tạo booking ở trạng thái chờ xác nhận, sau đó cấp STT để bệnh nhân thấy số thứ tự.
+      const bookingDate = normalizeDate(availability.date);
+      const priceAtBooking = await getSchedulePriceAtBooking(
+        scheduleId,
+        availability.doctorId,
+        availability.appointmentTypeId,
+        db
+      );
+
       const [booking] = await db.query(
         `
           INSERT INTO booking
-            (statusId, scheduleId, patientId, date, reason, token, priceAtBooking)
-          VALUES ('S1', ?, ?, ?, ?, ?, ?)
+            (statusId, scheduleId, patientId, date, reason, token, priceAtBooking, statusUpdatedAt)
+          VALUES ('S1', ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
         `,
         [
           scheduleId,
@@ -206,7 +255,7 @@ const bookAppointment = async (data) => {
       const queue = await assignBookingQueueNumberInCurrentTransaction(
         {
           bookingId: booking.insertId,
-          doctorId: scheduleMeta.doctorId,
+          doctorId: availability.doctorId,
           appointmentDate: bookingDate,
         },
         db
@@ -214,6 +263,7 @@ const bookAppointment = async (data) => {
 
       return {
         booking,
+        bookingDate,
         queue: queue.data,
       };
     });
@@ -228,7 +278,28 @@ const bookAppointment = async (data) => {
     if (bookingResult.booked) {
       return {
         errCode: 4,
-        errMessage: "Selected schedule has already been booked.",
+        errMessage: "Selected schedule is full.",
+      };
+    }
+
+    if (bookingResult.inactiveSchedule) {
+      return {
+        errCode: 4,
+        errMessage: "Selected schedule is not active.",
+      };
+    }
+
+    if (bookingResult.scheduleStarted) {
+      return {
+        errCode: 4,
+        errMessage: "Selected schedule has already started.",
+      };
+    }
+
+    if (bookingResult.outsideBookingWindow) {
+      return {
+        errCode: 4,
+        errMessage: "Selected schedule is outside the booking window.",
       };
     }
 
@@ -251,7 +322,7 @@ const bookAppointment = async (data) => {
         ...bookingResult.booking,
         queueId: bookingResult.queue?.id || null,
         queueNumber: bookingResult.queue?.queueNumber || null,
-        queueAppointmentDate: bookingResult.queue?.appointmentDate || bookingDate,
+        queueAppointmentDate: bookingResult.queue?.appointmentDate || bookingResult.bookingDate,
       },
     };
   } catch (error) {
@@ -309,11 +380,16 @@ const verifyBookAppointment = async (data) => {
         await db.query(
           `
             UPDATE booking
-            SET statusId = 'S2'
+            SET statusId = 'S2', statusUpdatedAt = CURRENT_TIMESTAMP
             WHERE id = ? AND statusId = 'S1'
           `,
           [booking.id]
         );
+        await createDoctorNotification({
+          doctorId: booking.doctorId,
+          bookingId: booking.id,
+          type: "NEW_BOOKING",
+        }, db);
       }
 
       const queue = await assignBookingQueueNumberInCurrentTransaction(
@@ -388,12 +464,16 @@ const ListBookingForPatient = async (patientId) => {
           s.appointmentTypeId,
           s.doctorId,
           b.statusId,
+          b.cancelReason,
+          b.rejectReason,
+          b.noShowNote,
+          b.statusUpdatedAt,
           bq.queueNumber,
           bq.appointmentDate AS queueAppointmentDate,
           ls.value_en AS statusEn,
           ls.value_vi AS statusVi,
-          lt.value_en AS timeEn,
-          lt.value_vi AS timeVi,
+          COALESCE(lt.value_en, CONCAT(TIME_FORMAT(s.startTime, '%H:%i'), ' - ', TIME_FORMAT(s.endTime, '%H:%i'))) AS timeEn,
+          COALESCE(lt.value_vi, CONCAT(TIME_FORMAT(s.startTime, '%H:%i'), ' - ', TIME_FORMAT(s.endTime, '%H:%i'))) AS timeVi,
           lat.value_en AS appointmentTypeEn,
           lat.value_vi AS appointmentTypeVi,
           u.firstName AS doctorFirstName,
@@ -446,7 +526,7 @@ const ListBookingForPatient = async (patientId) => {
           ON s.appointmentTypeId = lat.keyMap
          AND lat.type = 'APPOINTMENT_TYPE'
         WHERE b.patientId = ?
-        ORDER BY b.date DESC, COALESCE(bq.queueNumber, 999999) ASC, CAST(SUBSTRING(s.timeType, 2) AS UNSIGNED) ASC
+        ORDER BY b.date DESC, COALESCE(bq.queueNumber, 999999) ASC, COALESCE(TIME_TO_SEC(s.startTime), CAST(SUBSTRING(s.timeType, 2) AS UNSIGNED)) ASC
       `,
       [patientId]
     );
@@ -467,89 +547,14 @@ const ListBookingForPatient = async (patientId) => {
   }
 };
 
-// Hủy lịch hẹn nếu booking chưa hoàn tất và chưa bị hủy trước đó.
+// Hủy lịch hẹn của bệnh nhân theo cùng policy chuyển trạng thái với doctor/admin.
 const cancelBookAppointment = async (data) => {
-  const status = {};
-  try {
-    if (!data || !data.BookingId) {
-      status.errCode = 1;
-      status.errMessage = "Missing required parameters";
-      return status;
-    }
-
-    const { BookingId } = data;
-
-    const cancelResult = await withTransaction(async (db) => {
-      const [rows] = await db.query(
-        `
-          SELECT
-            b.id,
-            b.statusId,
-            s.appointmentTypeId,
-            vcs.statusId AS videoSessionStatusId
-          FROM booking b
-          INNER JOIN schedule s
-            ON s.id = b.scheduleId
-          LEFT JOIN video_consultation_session vcs
-            ON vcs.bookingId = b.id
-          WHERE b.id = ?
-            AND b.statusId <> 'S3'
-            AND b.statusId <> 'S4'
-          LIMIT 1
-          FOR UPDATE
-        `,
-        [BookingId]
-      );
-
-      if (rows.length === 0) {
-        return { blocked: "notFound" };
-      }
-
-      const booking = rows[0];
-      if (
-        booking.appointmentTypeId === APPOINTMENT_TYPE_ONLINE &&
-        booking.videoSessionStatusId === VIDEO_STATUS_IN_CALL
-      ) {
-        return { blocked: "onlineInCall" };
-      }
-
-      await db.query(
-        `
-          UPDATE booking
-          SET statusId = 'S4'
-          WHERE id = ?
-            AND statusId <> 'S3'
-            AND statusId <> 'S4'
-        `,
-        [BookingId]
-      );
-
-      return { blocked: null };
-    });
-
-    if (cancelResult.blocked === "notFound") {
-      status.errCode = 2;
-      status.errMessage = "Appointment cannot be canceled or does not exist!";
-      return status;
-    }
-
-    if (cancelResult.blocked === "onlineInCall") {
-      status.errCode = 3;
-      status.errMessage = "Online appointment cannot be canceled after the video room has started.";
-      return status;
-    }
-
-    await markVideoSessionCancelledForBooking(BookingId);
-
-    status.errCode = 0;
-    status.errMessage = "Appointment canceled successfully!";
-    return status;
-  } catch (error) {
-    console.log("cancelBookAppointment error:", error);
-    status.errCode = 1;
-    status.errMessage = error.message || "Database error";
-    return status;
-  }
+  return updateBookingStatus({
+    bookingId: data?.BookingId,
+    statusId: "S4",
+    note: data?.cancelReason,
+    actor: { id: data?.patientId, roleId: "R3" },
+  });
 };
 
 module.exports = {

@@ -4,7 +4,7 @@ const connection = require("../config/data");
 const { getDb, withTransaction } = require("./transactionService");
 
 const APPOINTMENT_TYPE_ONLINE = "AT2";
-const BOOKING_STATUS_CONFIRMED = "S2";
+const BOOKING_STATUS_CONFIRMED = "S8";
 const VIDEO_STATUS_NOT_OPENED = "VCS1";
 const VIDEO_STATUS_IN_CALL = "VCS2";
 const VIDEO_STATUS_ENDED = "VCS3";

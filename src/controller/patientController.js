@@ -77,6 +77,7 @@ const postCancelBookAppointment = async (req, res) => {
         let respone = await cancelBookAppointment({
             ...req.body,
             BookingId: bookingId,
+            patientId: req.user.id,
         });
         return res.status(200).json(respone);
 

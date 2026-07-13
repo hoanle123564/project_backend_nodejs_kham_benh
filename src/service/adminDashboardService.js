@@ -1,5 +1,7 @@
 const moment = require("moment");
 const connection = require("../config/data");
+const { getDb } = require("./transactionService");
+const { calculateFinalPrice } = require("./doctor/doctorSchedulePolicy");
 
 const parsePriceToNumber = (priceText) => {
     if (!priceText) return 0;
@@ -39,7 +41,7 @@ const normalizePositiveInteger = (value, defaultValue, maxValue) => {
 };
 
 const getOperationalStatus = (bookingStatusId, visitStatusId) => {
-    if (bookingStatusId === "S4") {
+    if (["S4", "S5", "S6", "S7"].includes(bookingStatusId)) {
         return OPERATION_STATUS.CANCELLED;
     }
 
@@ -58,8 +60,9 @@ const getOperationalStatus = (bookingStatusId, visitStatusId) => {
     return OPERATION_STATUS.WAITING_EXAM;
 };
 
-const getDoctorPriceAtBooking = async (doctorId, appointmentTypeId = APPOINTMENT_TYPE.OFFLINE) => {
-    const [rows] = await connection.promise().query(
+const getDoctorPriceAtBooking = async (doctorId, appointmentTypeId = APPOINTMENT_TYPE.OFFLINE, db) => {
+    const executor = getDb(db);
+    const [rows] = await executor.query(
         `
         SELECT
             offlinePrice.value_vi AS offlinePriceVi,
@@ -89,11 +92,13 @@ const getDoctorPriceAtBooking = async (doctorId, appointmentTypeId = APPOINTMENT
 const getSchedulePriceAtBooking = async (
     scheduleId,
     doctorId,
-    appointmentTypeId = APPOINTMENT_TYPE.OFFLINE
+    appointmentTypeId = APPOINTMENT_TYPE.OFFLINE,
+    db
 ) => {
-    const [rows] = await connection.promise().query(
+    const executor = getDb(db);
+    const [rows] = await executor.query(
         `
-        SELECT price
+        SELECT price, discountPercent
         FROM schedule
         WHERE id = ?
         LIMIT 1
@@ -102,11 +107,13 @@ const getSchedulePriceAtBooking = async (
     );
 
     const schedulePrice = rows[0]?.price;
+    const discountPercent = Number(rows[0]?.discountPercent) || 0;
     if (schedulePrice !== null && schedulePrice !== undefined && schedulePrice !== "") {
-        return Number(schedulePrice) || 0;
+        return calculateFinalPrice(Number(schedulePrice) || 0, discountPercent);
     }
 
-    return getDoctorPriceAtBooking(doctorId, appointmentTypeId);
+    const defaultPrice = await getDoctorPriceAtBooking(doctorId, appointmentTypeId, executor);
+    return calculateFinalPrice(defaultPrice, discountPercent);
 };
 
 const backfillBookingPrices = async () => {

@@ -347,7 +347,7 @@ const deleteUserService = async (id) => {
                  FROM booking b
                  INNER JOIN schedule s ON b.scheduleId = s.id
                  WHERE s.doctorId = ?
-                 AND b.statusId NOT IN ('S3', 'S4')
+                 AND b.statusId NOT IN ('S3', 'S4', 'S5', 'S6', 'S7')
                  LIMIT 1`,
                 [id]
             );
@@ -382,7 +382,7 @@ const deleteUserService = async (id) => {
             const [activeBookings] = await connection.promise().query(
                 `SELECT id FROM booking 
                  WHERE patientId = ? 
-                 AND statusId NOT IN ('S3', 'S4') 
+                 AND statusId NOT IN ('S3', 'S4', 'S5', 'S6', 'S7')
                  LIMIT 1`,
                 [id]
             );

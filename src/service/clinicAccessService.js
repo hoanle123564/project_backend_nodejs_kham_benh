@@ -351,8 +351,8 @@ const getBookingListScope = (user) => {
   if (user?.roleId === "R2") {
     return {
       allowed: true,
-      whereClause: "WHERE (s.doctorId = ? OR c.managerUserId = ?)",
-      params: [userId, userId],
+      whereClause: "WHERE s.doctorId = ?",
+      params: [userId],
     };
   }
 
