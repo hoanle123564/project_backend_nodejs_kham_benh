@@ -9,6 +9,7 @@ const {
 } = require("./chatState");
 const {
   chatDebug,
+  normalizeText,
   normalizeConsultationType,
   normalizeSpecialtyNames,
   ensureArray,
@@ -34,6 +35,23 @@ const {
   getAvailableSlotsForDoctor,
 } = require("./chatDoctorSearchService");
 
+const EMERGENCY_REPLY =
+  "Đây có thể là tình trạng cấp cứu. Hãy gọi 115 hoặc đến cơ sở cấp cứu gần nhất ngay. " +
+  "Tôi sẽ không tiếp tục gợi ý bác sĩ, lịch khám hoặc đặt lịch khám thường.";
+const EMERGENCY_PHRASES = [
+  "dau nguc du doi",
+  "dau nguc kem kho tho",
+  "kho tho dot ngot",
+  "ngat xiu",
+  "co giat",
+  "mat y thuc",
+  "chay mau nhieu",
+  "meo mieng",
+  "yeu nua nguoi",
+  "soc phan ve",
+  "sung moi kho tho",
+];
+
 const responseForSession = (session, reply, success = true, extraData = {}) => {
   const info = session.collectedInfo || defaultCollectedInfo();
 
@@ -50,6 +68,50 @@ const responseForSession = (session, reply, success = true, extraData = {}) => {
       ...extraData,
     },
   };
+};
+
+const isEmergencyResult = (aiResult = {}) => {
+  const normalized = aiResult.normalized || {};
+  const rawAi = aiResult.raw?.ai || {};
+  return Boolean(
+    normalized.urgent ||
+      rawAi.urgent ||
+      aiResult.raw?.urgent ||
+      normalized.intent === "EMERGENCY"
+  );
+};
+
+const hasEmergencyPhrase = (message) => {
+  const normalizedMessage = normalizeText(message);
+  return EMERGENCY_PHRASES.some((phrase) => normalizedMessage.includes(phrase));
+};
+
+const hasEmergencyDecision = (aiResult) =>
+  typeof aiResult?.normalized?.urgent === "boolean" ||
+  typeof aiResult?.raw?.ai?.urgent === "boolean" ||
+  typeof aiResult?.raw?.urgent === "boolean";
+
+const shouldBlockEmergency = (message, aiResult = null) =>
+  isEmergencyResult(aiResult || {}) ||
+  (!hasEmergencyDecision(aiResult) && hasEmergencyPhrase(message));
+
+const emergencyResponse = (session, aiResult = {}) => {
+  aiResult = aiResult || {};
+  const normalized = aiResult.normalized || {};
+  const rawAi = aiResult.raw?.ai || {};
+  session.state = STATES.START;
+  session.collectedInfo = {
+    ...defaultCollectedInfo(),
+    urgent: true,
+    routing_source: normalized.routing_source || rawAi.routing_source || "safety",
+  };
+  session.selectedDoctorId = null;
+  session.selectedScheduleId = null;
+  session.bookingId = null;
+  return responseForSession(session, EMERGENCY_REPLY, true, {
+    urgent: true,
+    routing_source: session.collectedInfo.routing_source,
+  });
 };
 
 const getPatientInfo = async (patientId) => {
@@ -269,10 +331,13 @@ const continueAfterRequiredInfo = async (session) => {
   return findDoctorsAndReply(session);
 };
 
-const handleStart = async (session, message) => {
-  const aiResult = await analyzeMessage(message);
+const handleStart = async (session, message, existingAiResult = null) => {
+  const aiResult = existingAiResult || (await analyzeMessage(message));
   const normalized = aiResult.normalized || {};
   session.lastAiResult = aiResult.raw;
+  if (shouldBlockEmergency(message, aiResult)) {
+    return emergencyResponse(session, aiResult);
+  }
   chatDebug("user message:", message);
   chatDebug("ai normalized:", normalized);
   chatDebug("ai fields:", {
@@ -488,7 +553,11 @@ const createBookingFromSession = async (session) => {
   };
 };
 
-const handleConfirmBooking = async (session, message) => {
+const handleConfirmBooking = async (session, message, aiResult = null) => {
+  if (shouldBlockEmergency(message, aiResult)) {
+    return emergencyResponse(session, aiResult);
+  }
+
   if (isCancelMessage(message)) {
     return cancelSession(session);
   }
@@ -539,7 +608,11 @@ const handleConfirmBooking = async (session, message) => {
   );
 };
 
-const dispatchByState = async (session, message) => {
+const dispatchByState = async (session, message, aiResult = null) => {
+  if (shouldBlockEmergency(message, aiResult)) {
+    return emergencyResponse(session, aiResult);
+  }
+
   if ([STATES.BOOKING_CREATED, STATES.CANCELLED, STATES.ERROR].includes(session.state)) {
     session.state = STATES.START;
     session.collectedInfo = defaultCollectedInfo();
@@ -550,7 +623,7 @@ const dispatchByState = async (session, message) => {
 
   switch (session.state) {
     case STATES.START:
-      return handleStart(session, message);
+      return handleStart(session, message, aiResult);
     case STATES.ASK_LOCATION:
       return handleAskLocation(session, message);
     case STATES.ASK_CONSULTATION_TYPE:
@@ -566,10 +639,10 @@ const dispatchByState = async (session, message) => {
     case STATES.ASK_PATIENT_EMAIL:
       return handleAskPatientEmail(session, message);
     case STATES.CONFIRM_BOOKING:
-      return handleConfirmBooking(session, message);
+      return handleConfirmBooking(session, message, aiResult);
     default:
       session.state = STATES.START;
-      return handleStart(session, message);
+      return handleStart(session, message, aiResult);
   }
 };
 
@@ -592,15 +665,26 @@ const handleChatMessage = async ({ sessionId, message, patientId, patientEmail }
     }
     await saveChatMessage(session, "user", trimmedMessage);
 
-    const response = isCancelMessage(trimmedMessage)
-      ? cancelSession(session)
-      : await dispatchByState(session, trimmedMessage);
+    const aiResult = await analyzeMessage(trimmedMessage);
+    session.lastAiResult = aiResult.raw;
+    const response = shouldBlockEmergency(trimmedMessage, aiResult)
+      ? emergencyResponse(session, aiResult)
+      : isCancelMessage(trimmedMessage)
+        ? cancelSession(session)
+        : await dispatchByState(session, trimmedMessage, aiResult);
 
     await saveSession(session);
     await saveChatMessage(session, "bot", response.reply, response.state, response.data);
     return response;
   } catch (error) {
     console.error("chatService.handleChatMessage error:", error);
+    // ponytail: phrase-only fallback is limited to AI transport outages; FastAPI owns full context.
+    if (hasEmergencyPhrase(trimmedMessage)) {
+      const response = emergencyResponse(session);
+      await saveSession(session);
+      await saveChatMessage(session, "bot", response.reply, response.state, response.data);
+      return response;
+    }
     session.state = STATES.ERROR;
     const response = responseForSession(
       session,
@@ -615,6 +699,8 @@ const handleChatMessage = async ({ sessionId, message, patientId, patientEmail }
 
 module.exports = {
   responseForSession,
+  isEmergencyResult,
+  emergencyResponse,
   getPatientInfo,
   hydratePatientInfo,
   mergeAiResult,

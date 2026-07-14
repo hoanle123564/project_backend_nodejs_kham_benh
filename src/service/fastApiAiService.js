@@ -9,6 +9,7 @@ const normalizeArray = (value) => {
 
 const normalizeAiResult = (responseJson) => {
   const normalized = responseJson?.normalized || {};
+  const ai = responseJson?.ai || {};
 
   return {
     intent: normalized.intent || null,
@@ -19,6 +20,12 @@ const normalizeAiResult = (responseJson) => {
     location: normalized.location || null,
     specialties: normalizeArray(normalized.specialties || normalized.specialty),
     preferred_date: normalized.preferred_date || null,
+    urgent: Boolean(normalized.urgent || ai.urgent || responseJson?.urgent),
+    routing_source:
+      normalized.routing_source || ai.routing_source || responseJson?.routing_source || null,
+    needs_clarification: Boolean(
+      normalized.needs_clarification || ai.needs_clarification || responseJson?.needs_clarification
+    ),
   };
 };
 
