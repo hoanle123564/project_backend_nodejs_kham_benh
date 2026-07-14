@@ -379,21 +379,65 @@ CREATE TABLE IF NOT EXISTS `chat_room_messages` (
   CONSTRAINT `fk_chat_room_messages_sender` FOREIGN KEY (`senderId`) REFERENCES `users` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE
 ) ENGINE=InnoDB;
 
+CREATE TABLE IF NOT EXISTS `doctor_reviews` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `bookingId` int NOT NULL,
+  `patientId` int NOT NULL,
+  `doctorId` int NOT NULL,
+  `rating` tinyint NOT NULL,
+  `comment` text COLLATE utf8mb4_unicode_ci NOT NULL,
+  `statusId` varchar(20) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'RV1',
+  `hiddenReason` text COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `hiddenBy` int DEFAULT NULL,
+  `hiddenAt` datetime DEFAULT NULL,
+  `createdAt` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updatedAt` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `unique_doctor_review_booking` (`bookingId`),
+  KEY `idx_doctor_reviews_doctor_status_created` (`doctorId`, `statusId`, `createdAt`),
+  KEY `idx_doctor_reviews_doctor_rating_status_created` (`doctorId`, `rating`, `statusId`, `createdAt`),
+  KEY `idx_doctor_reviews_patient_created` (`patientId`, `createdAt`),
+  KEY `idx_doctor_reviews_status_created` (`statusId`, `createdAt`),
+  KEY `idx_doctor_reviews_hidden_by` (`hiddenBy`),
+  CONSTRAINT `chk_doctor_reviews_rating` CHECK (`rating` BETWEEN 1 AND 5),
+  CONSTRAINT `fk_doctor_reviews_booking` FOREIGN KEY (`bookingId`) REFERENCES `booking` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE,
+  CONSTRAINT `fk_doctor_reviews_patient` FOREIGN KEY (`patientId`) REFERENCES `users` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE,
+  CONSTRAINT `fk_doctor_reviews_doctor` FOREIGN KEY (`doctorId`) REFERENCES `users` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE,
+  CONSTRAINT `fk_doctor_reviews_hidden_by` FOREIGN KEY (`hiddenBy`) REFERENCES `users` (`id`) ON DELETE SET NULL ON UPDATE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS `doctor_review_replies` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `reviewId` int NOT NULL,
+  `doctorId` int NOT NULL,
+  `content` text COLLATE utf8mb4_unicode_ci NOT NULL,
+  `createdAt` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updatedAt` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `unique_doctor_review_reply` (`reviewId`),
+  KEY `idx_doctor_review_replies_doctor` (`doctorId`),
+  CONSTRAINT `fk_doctor_review_replies_review` FOREIGN KEY (`reviewId`) REFERENCES `doctor_reviews` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE,
+  CONSTRAINT `fk_doctor_review_replies_doctor` FOREIGN KEY (`doctorId`) REFERENCES `users` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE
+) ENGINE=InnoDB;
+
 CREATE TABLE IF NOT EXISTS `doctor_notifications` (
   `id` INT AUTO_INCREMENT PRIMARY KEY,
   `doctorId` INT NOT NULL,
   `bookingId` INT NOT NULL,
   `chatRoomId` INT DEFAULT NULL,
+  `reviewId` INT DEFAULT NULL,
   `sourceMessageId` INT DEFAULT NULL,
-  `type` VARCHAR(30) NOT NULL COMMENT 'NEW_BOOKING, NEW_MESSAGE',
+  `type` VARCHAR(30) NOT NULL COMMENT 'NEW_BOOKING, NEW_MESSAGE, NEW_REVIEW',
   `content` VARCHAR(500) DEFAULT NULL,
   `isRead` TINYINT(1) NOT NULL DEFAULT 0,
   `readAt` DATETIME DEFAULT NULL,
   `createdAt` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   UNIQUE KEY `unique_doctor_notification_message` (`sourceMessageId`),
+  UNIQUE KEY `unique_doctor_notification_review` (`reviewId`, `type`),
   KEY `idx_doctor_notification_feed` (`doctorId`, `isRead`, `createdAt`),
   CONSTRAINT `fk_doctor_notification_doctor` FOREIGN KEY (`doctorId`) REFERENCES `users` (`id`) ON DELETE CASCADE ON UPDATE CASCADE,
-  CONSTRAINT `fk_doctor_notification_booking` FOREIGN KEY (`bookingId`) REFERENCES `booking` (`id`) ON DELETE CASCADE ON UPDATE CASCADE
+  CONSTRAINT `fk_doctor_notification_booking` FOREIGN KEY (`bookingId`) REFERENCES `booking` (`id`) ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT `fk_doctor_notification_review` FOREIGN KEY (`reviewId`) REFERENCES `doctor_reviews` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE
 ) ENGINE=InnoDB;
 
 -- =====================================================
@@ -763,6 +807,10 @@ INSERT IGNORE INTO `lookup` (`keyMap`, `type`, `value_vi`, `value_en`) VALUES
 INSERT IGNORE INTO `lookup` (`keyMap`, `type`, `value_vi`, `value_en`) VALUES
 ('MR1', 'MEDICAL_RECORD_STATUS', 'Bản nháp', 'Draft'),
 ('MR2', 'MEDICAL_RECORD_STATUS', 'Hoàn thành', 'Completed');
+
+INSERT IGNORE INTO `lookup` (`keyMap`, `type`, `value_vi`, `value_en`) VALUES
+('RV1', 'REVIEW_STATUS', 'Đang hiển thị', 'Visible'),
+('RV2', 'REVIEW_STATUS', 'Đã ẩn', 'Hidden');
 
 -- TÀI KHOẢN ADMIN
 -- Mật khẩu: 123456

@@ -21,6 +21,7 @@ const {
 const {
   canPatientJoinVideoBooking,
 } = require("./videoConsultationService");
+const { getReviewEligibilityFromBooking } = require("./doctorReviewService");
 
 const CAPACITY_EXCLUDED_STATUS_IDS = getCapacityExcludedStatusIds();
 const activeStatusPlaceholders = () => CAPACITY_EXCLUDED_STATUS_IDS.map(() => "?").join(", ");
@@ -494,6 +495,7 @@ const ListBookingForPatient = async (patientId) => {
           mr.preliminaryDiagnosis,
           mr.followUpDate,
           mr.statusId AS medicalRecordStatusId,
+          dr.id AS reviewId,
           vcs.statusId AS videoSessionStatusId,
           vcs.startedAt AS videoStartedAt,
           vcs.endedAt AS videoEndedAt
@@ -514,6 +516,8 @@ const ListBookingForPatient = async (patientId) => {
           ON pp.patientId = patient.id
         LEFT JOIN medical_record mr
           ON mr.bookingId = b.id
+        LEFT JOIN doctor_reviews dr
+          ON dr.bookingId = b.id
         LEFT JOIN video_consultation_session vcs
           ON vcs.bookingId = b.id
         LEFT JOIN lookup ls
@@ -533,10 +537,17 @@ const ListBookingForPatient = async (patientId) => {
 
     status.errCode = 0;
     status.errMessage = "OK";
-    status.data = (rows || []).map((row) => ({
-      ...row,
-      canJoinVideo: canPatientJoinVideoBooking(row),
-    }));
+    status.data = (rows || []).map((row) => {
+      const reviewEligibility = getReviewEligibilityFromBooking(row);
+      return {
+        ...row,
+        reviewEligibility,
+        canReviewDoctor: reviewEligibility.eligible,
+        reviewedDoctor: reviewEligibility.reviewed,
+        reviewReason: reviewEligibility.reason,
+        canJoinVideo: canPatientJoinVideoBooking(row),
+      };
+    });
     return status;
   } catch (error) {
     console.log("ListBookingForPatient error:", error);

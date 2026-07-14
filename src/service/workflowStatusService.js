@@ -6,6 +6,7 @@ const LOOKUP_TYPES = Object.freeze({
   PAYMENT_METHOD: "PAYMENT",
   PAYMENT_STATUS: "PAYMENT_STATUS",
   MEDICAL_RECORD_STATUS: "MEDICAL_RECORD_STATUS",
+  REVIEW_STATUS: "REVIEW_STATUS",
 });
 
 const BOOKING_STATUS = Object.freeze({
@@ -34,6 +35,11 @@ const PAYMENT_STATUS = Object.freeze({
 const MEDICAL_RECORD_STATUS = Object.freeze({
   DRAFT: "MR1",
   CLOSED: "MR2",
+});
+
+const REVIEW_STATUS = Object.freeze({
+  VISIBLE: "RV1",
+  HIDDEN: "RV2",
 });
 
 // Tìm một bản ghi lookup theo type và keyMap để lấy nhãn/trạng thái hợp lệ.
@@ -79,6 +85,7 @@ module.exports = {
   VISIT_STATUS,
   PAYMENT_STATUS,
   MEDICAL_RECORD_STATUS,
+  REVIEW_STATUS,
   getLookupByKey,
   assertLookupKey,
   isClosedMedicalRecordStatus,

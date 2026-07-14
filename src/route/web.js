@@ -107,6 +107,16 @@ const {
   getMyDoctorNotifications,
   markMyDoctorNotificationsRead,
 } = require("../controller/doctorNotificationController");
+const {
+  getAdminReviewList,
+  getBookingReviewEligibilityApi,
+  getMyDoctorReviews,
+  getPublicDoctorReviewList,
+  patchAdminReviewVisibility,
+  patchDoctorReviewReply,
+  postBookingReview,
+  postDoctorReviewReply,
+} = require("../controller/doctorReviewController");
 
 // specialty controller
 const {
@@ -183,6 +193,8 @@ router.get("/api/admin/dashboard-statistics", authMiddleware, adminMiddleware, g
 router.get("/api/admin/medical-records", authMiddleware, adminMiddleware, getAdminMedicalRecordsApi);
 router.get("/api/admin/bookings", authMiddleware, adminMiddleware, getAdminBookings);
 router.patch("/api/admin/bookings/:bookingId/status", authMiddleware, adminMiddleware, patchAdminBookingStatus);
+router.get("/api/admin/reviews", authMiddleware, adminMiddleware, getAdminReviewList);
+router.patch("/api/admin/reviews/:reviewId/visibility", authMiddleware, adminMiddleware, patchAdminReviewVisibility);
 
 // doctor routes
 router.get("/api/top-doctor", getTopDoctor);
@@ -207,6 +219,9 @@ router.get("/api/doctor/medical-records", authMiddleware, getDoctorMedicalRecord
 router.get("/api/doctor/dashboard-statistics", authMiddleware, getDoctorDashboardStatisticsApi);
 router.get("/api/doctor/bookings", authMiddleware, getDoctorBookings);
 router.patch("/api/doctor/bookings/:bookingId/status", authMiddleware, patchDoctorBookingStatus);
+router.get("/api/doctor/reviews", authMiddleware, getMyDoctorReviews);
+router.post("/api/doctor/reviews/:reviewId/reply", authMiddleware, postDoctorReviewReply);
+router.patch("/api/doctor/reviews/:reviewId/reply", authMiddleware, patchDoctorReviewReply);
 router.post("/api/doctor/examination-visit", authMiddleware, ensureDoctorExaminationVisit);
 router.get("/api/doctor/examination-visit-detail", authMiddleware, getDoctorExaminationVisitDetail);
 router.post("/api/doctor/medical-record", authMiddleware, ensureDoctorMedicalRecord);
@@ -225,6 +240,7 @@ router.delete("/api/delete-schedule-doctor", authMiddleware, handleDeleteSchedul
 router.get("/api/get-list-booking-appointment-doctor", authMiddleware, getListAppointmentForDoctor);
 router.get("/api/get-all-list-booking", authMiddleware, getListBooking);
 router.get("/api/get-related-doctors", getRelatedDoctors);
+router.get("/api/doctors/:doctorId/reviews", getPublicDoctorReviewList);
 router.put("/api/update-doctor-info-order", authMiddleware, adminMiddleware, handleUpdateDoctorInfoOrder);
 router.put("/api/change-status-doctor-info", authMiddleware, adminMiddleware, handleChangeStatusDoctorInfo);
 
@@ -236,6 +252,8 @@ router.get("/api/patient/profile", authMiddleware, getPatientProfileAPI);
 router.put("/api/patient/profile", authMiddleware, updatePatientProfileAPI);
 router.get("/api/get-list-booking-appointment-patient", authMiddleware, getListBookingForPatient);
 router.post("/api/cancel-book-appointment", authMiddleware, postCancelBookAppointment);
+router.get("/api/bookings/:bookingId/review-eligibility", authMiddleware, getBookingReviewEligibilityApi);
+router.post("/api/bookings/:bookingId/review", authMiddleware, postBookingReview);
 
 // video consultation routes
 router.post("/api/video-consultation/join-token", authMiddleware, postJoinToken);

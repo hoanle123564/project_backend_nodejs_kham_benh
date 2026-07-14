@@ -10,11 +10,20 @@ const assertDoctor = (user = {}) => {
   }
 };
 
-const createDoctorNotification = async ({ doctorId, bookingId, chatRoomId = null, sourceMessageId = null, type, content = "" }, db) => {
+const createDoctorNotification = async ({
+  doctorId,
+  bookingId,
+  chatRoomId = null,
+  reviewId = null,
+  sourceMessageId = null,
+  type,
+  content = "",
+}, db) => {
   const [result] = await getDb(db).query(
-    `INSERT INTO doctor_notifications (doctorId, bookingId, chatRoomId, sourceMessageId, type, content)
-     VALUES (?, ?, ?, ?, ?, ?)`,
-    [doctorId, bookingId, chatRoomId, sourceMessageId, type, String(content).slice(0, 500)]
+    `INSERT IGNORE INTO doctor_notifications
+      (doctorId, bookingId, chatRoomId, reviewId, sourceMessageId, type, content)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [doctorId, bookingId, chatRoomId, reviewId, sourceMessageId, type, String(content).slice(0, 500)]
   );
   return result.insertId;
 };
@@ -23,7 +32,7 @@ const getDoctorNotifications = async (user) => {
   assertDoctor(user);
   const [rows] = await connection.promise().query(
     `
-      SELECT n.id, n.bookingId, n.chatRoomId, n.type, n.content, n.isRead, n.createdAt,
+      SELECT n.id, n.bookingId, n.chatRoomId, n.reviewId, n.type, n.content, n.isRead, n.createdAt,
         b.date AS appointmentDate, s.timeType,
         patient.firstName AS patientFirstName, patient.lastName AS patientLastName, patient.image AS patientImage
       FROM doctor_notifications n
