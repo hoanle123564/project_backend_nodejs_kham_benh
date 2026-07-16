@@ -112,6 +112,11 @@ const canSaveDoctorInfo = async (user, doctorId, targetClinicId) => {
   }
 
   const normalizedDoctorId = normalizePositiveId(doctorId);
+  const userId = normalizePositiveId(user?.id);
+  if (user?.roleId === "R2") {
+    return Boolean(normalizedDoctorId && userId && normalizedDoctorId === userId);
+  }
+
   const normalizedTargetClinicId = normalizePositiveId(targetClinicId);
   if (!normalizedDoctorId || !normalizedTargetClinicId || !isClinicManagerRole(user)) {
     return false;

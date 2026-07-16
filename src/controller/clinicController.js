@@ -32,7 +32,19 @@ const postCreateClinic = async (req, res) => {
 };
 const getAllClinic = async (req, res) => {
     try {
-        let respone = await getClinic(req.query);
+        const managedOnly = req.query?.managedOnly === "1";
+        if (managedOnly && !["R2", "R4"].includes(req.user?.roleId)) {
+            return res.status(403).json(FORBIDDEN_RESPONSE);
+        }
+
+        let respone = await getClinic(
+            managedOnly ? { ...req.query, managerUserId: req.user.id } : req.query
+        );
+
+        if (managedOnly && respone?.errCode === 0 && respone.data.length === 0) {
+            return res.status(403).json(FORBIDDEN_RESPONSE);
+        }
+
         return res.status(200).json(respone);
     } catch (error) {
         console.log("getAllClinic error", error);
@@ -45,6 +57,13 @@ const getAllClinic = async (req, res) => {
 
 const getDetailClinicById = async (req, res) => {
     try {
+        if (req.query?.managedOnly === "1") {
+            const allowed = await canManageClinic(req.user, req.query?.id);
+            if (!allowed) {
+                return res.status(403).json(FORBIDDEN_RESPONSE);
+            }
+        }
+
         let response = await getClinicDetail(req.query);
         return res.status(200).json(response);
     } catch (error) {
@@ -77,10 +96,14 @@ const handleDeleteClinic = async (req, res) => {
 
 const handleEditClinic = async (req, res) => {
     try {
-        const data = req.body;
+        const data = { ...req.body };
         const allowed = await canManageClinic(req.user, data?.id);
         if (!allowed) {
             return res.status(403).json(FORBIDDEN_RESPONSE);
+        }
+
+        if (req.user?.roleId === "R2") {
+            data.managerUserId = req.user.id;
         }
 
         let response = await editClinic(data);

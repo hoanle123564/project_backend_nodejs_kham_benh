@@ -58,7 +58,8 @@ const handleCreateNewUserAPI = async (req, res) => {
 // EDIT USER
 const handleEditUserAPI = async (req, res) => {
     try {
-        const response = await updateUserService(req.body);
+        const options = req.user?.roleId === "R2" ? { selfUserId: req.user.id } : undefined;
+        const response = await updateUserService(req.body, options);
         return res.status(200).json(response);
     } catch (error) {
         console.log("handleEditUserAPI error", error);

@@ -72,12 +72,16 @@ const getDetailDoctor = async (req, res) => {
 
 const postInfoDoctor = async (req, res) => {
     try {
-        const allowed = await canSaveDoctorInfo(req.user, req.body?.doctorId, req.body?.clinicId);
+        const requestData = req.body || {};
+        const doctorInfo = req.user?.roleId === "R2"
+            ? { ...requestData, doctorId: req.user.id }
+            : requestData;
+        const allowed = await canSaveDoctorInfo(req.user, doctorInfo?.doctorId, doctorInfo?.clinicId);
         if (!allowed) {
             return res.status(403).json(FORBIDDEN_RESPONSE);
         }
 
-        let response = await saveDetailInfoDoctor(req.body);
+        let response = await saveDetailInfoDoctor(doctorInfo);
         return res.status(200).json(response);
     } catch (error) {
         console.log("postInfoDoctor error", error);

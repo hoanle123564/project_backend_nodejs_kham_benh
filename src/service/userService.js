@@ -418,23 +418,27 @@ const deleteUserService = async (id) => {
 };
 
 // UPDATE USER
-const updateUserService = async (data) => {
+const updateUserService = async (data, { selfUserId } = {}) => {
     try {
         const {
-            id,
+            id: requestedId,
             firstName,
             lastName,
-            email,
+            email: requestedEmail,
             address,
             provinceCode,
             districtCode,
             wardCode,
             gender,
-            roleId,
+            roleId: requestedRoleId,
             phoneNumber,
             positionId,
             image
         } = data;
+        const normalizedSelfUserId = Number(selfUserId);
+        const id = Number.isInteger(normalizedSelfUserId) && normalizedSelfUserId > 0
+            ? normalizedSelfUserId
+            : requestedId;
         if (image) { console.log('image in service:'); }
 
         if (!id) {
@@ -442,13 +446,17 @@ const updateUserService = async (data) => {
         }
 
         const [check] = await connection.promise().query(
-            `SELECT id FROM users WHERE id = ?`,
+            `SELECT * FROM users WHERE id = ?`,
             [id]
         );
 
         if (check.length === 0) {
             return { errCode: 2, errMessage: "User not found" };
         }
+
+        const currentUser = check[0];
+        const email = selfUserId ? currentUser.email : requestedEmail;
+        const roleId = selfUserId ? currentUser.roleId : requestedRoleId;
 
         await connection.promise().query(
             `UPDATE users

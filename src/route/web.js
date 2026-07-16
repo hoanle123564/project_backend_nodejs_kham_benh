@@ -179,6 +179,8 @@ const {
   handleUpdatePostOrder,
 } = require("../controller/postController");
 const router = express.Router();
+const optionalAuthMiddleware = (req, res, next) =>
+  req.headers.authorization ? authMiddleware(req, res, next) : next();
 
 router.post("/api/login", handleLogin);
 router.get("/api/get-all-user", handleGetAllUser);
@@ -291,8 +293,8 @@ router.delete("/api/delete-clinic", authMiddleware, handleDeleteClinic);
 router.put("/api/edit-clinic", authMiddleware, handleEditClinic);
 router.put("/api/update-clinic-order", authMiddleware, adminMiddleware, handleUpdateClinicOrder);
 router.put("/api/change-status-clinic", authMiddleware, adminMiddleware, handleChangeStatusClinic);
-router.get("/api/get-clinic", getAllClinic);
-router.get("/api/get-detail-clinic-by-id", getDetailClinicById);
+router.get("/api/get-clinic", optionalAuthMiddleware, getAllClinic);
+router.get("/api/get-detail-clinic-by-id", optionalAuthMiddleware, getDetailClinicById);
 router.get("/api/get-clinic-content-section", authMiddleware, handleGetClinicContentSections);
 router.post("/api/create-clinic-content-section", authMiddleware, postCreateClinicContentSection);
 router.put("/api/edit-clinic-content-section", authMiddleware, handleEditClinicContentSection);

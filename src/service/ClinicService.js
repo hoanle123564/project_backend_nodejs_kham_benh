@@ -251,10 +251,24 @@ const createClinic = async (clinicData) => {
 const getClinic = async (query = {}) => {
     try {
         const publicOnly = query?.publicOnly === "1" || query?.publicOnly === 1 || query?.isPublic === "1";
-        const whereClause = publicOnly ? "WHERE isActive = 1" : "";
+        const managerUserId = normalizePositiveId(query?.managerUserId);
+        const whereConditions = [];
+        const params = [];
+
+        if (publicOnly) {
+            whereConditions.push("isActive = 1");
+        }
+
+        if (managerUserId) {
+            whereConditions.push("managerUserId = ?");
+            params.push(managerUserId);
+        }
+
+        const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(" AND ")}` : "";
 
         const [rows] = await connection.promise().query(
-            `SELECT * FROM clinic ${whereClause} ORDER BY displayOrder ASC, id ASC`
+            `SELECT * FROM clinic ${whereClause} ORDER BY displayOrder ASC, id ASC`,
+            params
         );
 
         return {
