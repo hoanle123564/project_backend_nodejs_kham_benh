@@ -108,75 +108,39 @@ const getScheduleAvailabilityInCurrentTransaction = async (scheduleId, db) => {
   };
 };
 
-// Xác định patientId: dùng id đăng nhập nếu có, nếu không thì tìm/tạo user bệnh nhân theo email.
-const resolvePatientId = async ({
-  patientId,
-  email,
-  firstName,
-  lastName,
-  address,
-  gender,
-  phoneNumber,
-}, db) => {
-  const executor = db || connection.promise();
+const normalizeOptionalReason = (value) => {
+  const reason = typeof value === "string" ? value.trim() : "";
+  return reason || null;
+};
 
-  if (patientId) {
-    return patientId;
-  }
+const isValidBookingPrice = (value) => {
+  const price = Number(value);
+  return Number.isInteger(price) && price > 0;
+};
 
-  // Nếu email chưa tồn tại thì tạo tài khoản bệnh nhân tối giản cho booking.
-  const [rows] = await executor.query(
-    `SELECT id FROM users WHERE email = ?`,
-    [email]
-  );
-
-  if (rows.length === 0) {
-    const [insertUser] = await executor.query(
-      `
-        INSERT INTO users
-          (email, firstName, lastName, address, gender, phoneNumber, roleId)
-        VALUES (?, ?, ?, ?, ?, ?, 'R3')
-      `,
-      [email, firstName, lastName, address, gender, phoneNumber]
-    );
-
-    return insertUser.insertId;
-  }
-
-  const realPatientId = rows[0].id;
-
-  // Nếu email đã có, cập nhật lại thông tin liên hệ mới nhất từ form đặt lịch.
-  await executor.query(
+const getBookingPatient = async (patientId, db) => {
+  const [rows] = await db.query(
     `
-      UPDATE users
-      SET firstName = ?, lastName = ?, address = ?, gender = ?, phoneNumber = ?
-      WHERE id = ?
+      SELECT id, email, firstName, lastName
+      FROM users
+      WHERE id = ? AND roleId = 'R3'
+      LIMIT 1
     `,
-    [firstName, lastName, address, gender, phoneNumber, realPatientId]
+    [patientId]
   );
 
-  return realPatientId;
+  return rows[0] || null;
 };
 
 // Đặt lịch khám, tạo booking và cấp STT hàng đợi trong cùng transaction.
-const bookAppointment = async (data) => {
+const bookAppointment = async (data, authenticatedPatientId) => {
   try {
-    if (!data || !data.scheduleId) {
+    if (!data || !data.scheduleId || !authenticatedPatientId) {
       return { errCode: 1, errMessage: "Missing required parameters" };
     }
 
-    const {
-      email,
-      firstName,
-      lastName,
-      address,
-      gender,
-      phoneNumber,
-      scheduleId,
-      reason,
-      timeString,
-      patientId
-    } = data;
+    const { scheduleId } = data;
+    const reason = normalizeOptionalReason(data.reason);
 
     const scheduleMeta = await getScheduleMeta(scheduleId);
     if (!scheduleMeta) {
@@ -218,15 +182,30 @@ const bookAppointment = async (data) => {
         return { outsideBookingWindow: true };
       }
 
-      const realPatientId = await resolvePatientId({
-        patientId,
-        email,
-        firstName,
-        lastName,
-        address,
-        gender,
-        phoneNumber,
-      }, db);
+      if (availability.appointmentTypeId === "AT2") {
+        return { onlinePaymentUnavailable: true };
+      }
+
+      const patient = await getBookingPatient(authenticatedPatientId, db);
+      if (!patient) {
+        return { missingPatient: true };
+      }
+
+      const [existingBookings] = await db.query(
+        `
+          SELECT id
+          FROM booking
+          WHERE scheduleId = ?
+            AND patientId = ?
+            AND statusId NOT IN (${activeStatusPlaceholders()})
+          LIMIT 1
+        `,
+        [scheduleId, patient.id, ...CAPACITY_EXCLUDED_STATUS_IDS]
+      );
+
+      if (existingBookings.length > 0) {
+        return { duplicateBooking: true };
+      }
 
       // Tạo booking ở trạng thái chờ xác nhận, sau đó cấp STT để bệnh nhân thấy số thứ tự.
       const bookingDate = normalizeDate(availability.date);
@@ -237,6 +216,10 @@ const bookAppointment = async (data) => {
         db
       );
 
+      if (!isValidBookingPrice(priceAtBooking)) {
+        return { invalidPrice: true };
+      }
+
       const [booking] = await db.query(
         `
           INSERT INTO booking
@@ -245,9 +228,9 @@ const bookAppointment = async (data) => {
         `,
         [
           scheduleId,
-          realPatientId,
+          patient.id,
           bookingDate,
-          reason || null,
+          reason,
           token,
           priceAtBooking,
         ]
@@ -266,6 +249,8 @@ const bookAppointment = async (data) => {
         booking,
         bookingDate,
         queue: queue.data,
+        patient,
+        priceAtBooking,
       };
     });
 
@@ -304,14 +289,44 @@ const bookAppointment = async (data) => {
       };
     }
 
+    if (bookingResult.onlinePaymentUnavailable) {
+      return {
+        errCode: 6,
+        errMessage: "Online payment is not configured.",
+      };
+    }
+
+    if (bookingResult.missingPatient) {
+      return {
+        errCode: 2,
+        errMessage: "Patient profile was not found",
+      };
+    }
+
+    if (bookingResult.duplicateBooking) {
+      return {
+        errCode: 4,
+        errMessage: "You already have an active booking for this schedule.",
+      };
+    }
+
+    if (bookingResult.invalidPrice) {
+      return {
+        errCode: 5,
+        errMessage: "Consultation price is unavailable.",
+      };
+    }
+
     const doctorName =
       `${scheduleMeta.firstName || ""} ${scheduleMeta.lastName || ""}`.trim() || "Bac si";
 
     // Gửi email xác nhận sau khi transaction đã commit thành công.
     await sendSimpleEmail({
-      reciverEmail: email,
-      patientName: `${firstName} ${lastName}`.trim(),
-      time: timeString,
+      reciverEmail: bookingResult.patient.email,
+      patientName: `${bookingResult.patient.firstName} ${bookingResult.patient.lastName}`.trim(),
+      time: `${scheduleMeta.startTime || scheduleMeta.timeType || ""}${
+        scheduleMeta.endTime ? ` - ${scheduleMeta.endTime}` : ""
+      } - ${moment(scheduleMeta.date).format("DD/MM/YYYY")}`,
       doctorName,
       redirectLink: buildUrlEmail(scheduleId, token),
     });
@@ -324,6 +339,7 @@ const bookAppointment = async (data) => {
         queueId: bookingResult.queue?.id || null,
         queueNumber: bookingResult.queue?.queueNumber || null,
         queueAppointmentDate: bookingResult.queue?.appointmentDate || bookingResult.bookingDate,
+        priceAtBooking: bookingResult.priceAtBooking,
       },
     };
   } catch (error) {
@@ -578,6 +594,8 @@ const cancelBookAppointment = async (data) => {
 
 module.exports = {
   bookAppointment,
+  normalizeOptionalReason,
+  isValidBookingPrice,
   verifyBookAppointment,
   AllPatient,
   ListBookingForPatient,

@@ -9,7 +9,11 @@ const isPatientUser = (user) => user?.roleId === "R3";
 
 const postBookAppointment = async (req, res) => {
     try {
-        let response = await bookAppointment(req.body);
+        if (!isPatientUser(req.user)) {
+            return res.status(403).json(FORBIDDEN_RESPONSE);
+        }
+
+        let response = await bookAppointment(req.body, req.user.id);
         return res.status(200).json(response);
     } catch (error) {
         console.log("postBookAppointment error", error);

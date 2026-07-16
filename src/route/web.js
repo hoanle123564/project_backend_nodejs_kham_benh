@@ -247,7 +247,7 @@ router.put("/api/update-doctor-info-order", authMiddleware, adminMiddleware, han
 router.put("/api/change-status-doctor-info", authMiddleware, adminMiddleware, handleChangeStatusDoctorInfo);
 
 // patient routes
-router.post("/api/patient-book-appointment", postBookAppointment);
+router.post("/api/patient-book-appointment", authMiddleware, postBookAppointment);
 router.post("/api/verify-book-appointment", postVerifyBookAppointment);
 router.get("/api/all-patien", getAllPatient);
 router.get("/api/patient/profile", authMiddleware, getPatientProfileAPI);
