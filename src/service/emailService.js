@@ -249,7 +249,39 @@ const sendResultEmail = async (dataSend) => {
   console.log("Email sent: " + info.response);
 };
 
+const sendAppointmentReminderEmail = async (dataSend = {}) => {
+  const receiverEmail = dataSend.receiverEmail || dataSend.reciverEmail;
+  if (!receiverEmail) {
+    throw new Error("Missing reminder receiver email");
+  }
+
+  const transporter = createEmailTransporter();
+  const mailOptions = {
+    from: `"LIFE CARE" <${process.env.EMAIL_APP}>`,
+    to: receiverEmail,
+    subject: "NHẮC LỊCH KHÁM BỆNH",
+    html: `
+      <div style="font-family: Arial, sans-serif; line-height: 1.7; color:#333;">
+        <h3>Xin chao ${escapeHtml(dataSend.patientName || "ban")}!</h3>
+        <p>Lịch khám của bạn sắp bắt đầu trong 30 phút sắp tới</p>
+        <div style="margin:16px 0; padding:14px; background:#f0fdfa; border-left:4px solid #0f766e; border-radius:6px;">
+          <p style="margin:6px 0;"><b>Thoi gian:</b> ${escapeHtml(dataSend.appointmentTime || "")}</p>
+          <p style="margin:6px 0;"><b>Ngay kham:</b> ${escapeHtml(dataSend.appointmentDate || "")}</p>
+          <p style="margin:6px 0;"><b>Bac si:</b> ${escapeHtml(dataSend.doctorName || "")}</p>
+          <p style="margin:6px 0;"><b>Phong kham:</b> ${escapeHtml(dataSend.clinicName || "")}</p>
+        </div>
+        <p>Vui long san sang va den dung gio hen.</p>
+      </div>
+    `,
+  };
+
+  const info = await transporter.sendMail(mailOptions);
+  console.log("Appointment reminder email sent: " + info.response);
+  return info;
+};
+
 module.exports = {
   sendSimpleEmail,
   sendResultEmail,
+  sendAppointmentReminderEmail,
 };

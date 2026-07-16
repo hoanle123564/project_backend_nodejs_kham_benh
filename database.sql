@@ -263,7 +263,29 @@ CREATE TABLE IF NOT EXISTS `booking` (
 ) ENGINE=InnoDB;
 
 -- =====================================================
--- BANG 8A: BOOKING_QUEUE_SEQUENCE (Bo dem STT theo bac si/ngay)
+-- BANG 8A: APPOINTMENT_REMINDERS (Nhac lich kham cho benh nhan)
+-- Luu trang thai gui tung kenh de scheduler/API confirm khong gui trung.
+-- =====================================================
+CREATE TABLE IF NOT EXISTS `appointment_reminders` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `bookingId` int NOT NULL,
+  `remindAt` datetime NOT NULL,
+  `emailSentAt` datetime DEFAULT NULL,
+  `smsSentAt` datetime DEFAULT NULL,
+  `inAppNotifiedAt` datetime DEFAULT NULL,
+  `smsSkippedAt` datetime DEFAULT NULL,
+  `processingAt` datetime DEFAULT NULL,
+  `lastError` text COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `createdAt` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updatedAt` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `unique_appointment_reminder_booking` (`bookingId`),
+  KEY `idx_appointment_reminders_due` (`remindAt`, `processingAt`),
+  CONSTRAINT `fk_appointment_reminders_booking` FOREIGN KEY (`bookingId`) REFERENCES `booking` (`id`) ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB;
+
+-- =====================================================
+-- BANG 8B: BOOKING_QUEUE_SEQUENCE (Bo dem STT theo bac si/ngay)
 -- Dung cho transaction cap STT booking bang row lock o cac phase runtime sau.
 -- =====================================================
 CREATE TABLE IF NOT EXISTS `booking_queue_sequence` (
@@ -277,7 +299,7 @@ CREATE TABLE IF NOT EXISTS `booking_queue_sequence` (
 ) ENGINE=InnoDB;
 
 -- =====================================================
--- BANG 8B: BOOKING_QUEUE (STT kham duoc cap tai thoi diem booking)
+-- BANG 8C: BOOKING_QUEUE (STT kham duoc cap tai thoi diem booking)
 -- Luu STT rieng voi booking vi booking giu scheduleId lam quan he loi va khong co doctorId truc tiep.
 -- =====================================================
 CREATE TABLE IF NOT EXISTS `booking_queue` (
@@ -298,7 +320,7 @@ CREATE TABLE IF NOT EXISTS `booking_queue` (
 ) ENGINE=InnoDB;
 
 -- =====================================================
--- BANG 8C: CHAT_SESSIONS (Trang thai hoi thoai chatbot)
+-- BANG 8D: CHAT_SESSIONS (Trang thai hoi thoai chatbot)
 -- Luu state machine chatbot va tieu de ngan cho lich su hoi thoai.
 -- =====================================================
 CREATE TABLE IF NOT EXISTS `chat_sessions` (
@@ -323,7 +345,7 @@ CREATE TABLE IF NOT EXISTS `chat_sessions` (
 ) ENGINE=InnoDB;
 
 -- =====================================================
--- BANG 8D: CHAT_MESSAGES (Tin nhan chatbot theo tung hoi thoai)
+-- BANG 8E: CHAT_MESSAGES (Tin nhan chatbot theo tung hoi thoai)
 -- =====================================================
 CREATE TABLE IF NOT EXISTS `chat_messages` (
   `id` INT AUTO_INCREMENT PRIMARY KEY,

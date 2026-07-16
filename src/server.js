@@ -4,6 +4,7 @@ const http = require('http')
 const ViewEngine = require('../src/config/viewEngine')
 const initWebRoute = require('../src/route/web')
 const { initChatSocket } = require('../src/socket/chatSocket')
+const { startAppointmentReminderScheduler } = require('../src/service/appointmentReminderService')
 const cors = require('cors')
 require('dotenv').config()
 
@@ -73,5 +74,5 @@ initChatSocket(server, {
 
 server.listen(port, () => {
     console.log('Backend nodejs is running on port: ' + port);
-
+    startAppointmentReminderScheduler()
 })

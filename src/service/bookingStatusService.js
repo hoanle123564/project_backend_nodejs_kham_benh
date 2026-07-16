@@ -11,6 +11,7 @@ const {
   VIDEO_STATUS_ENDED,
   VIDEO_STATUS_IN_CALL,
 } = require("./videoConsultationService");
+const { dispatchReminderForBooking } = require("./appointmentReminderService");
 
 const INACTIVE_BOOKING_STATUS_IDS = Object.freeze([
   BOOKING_STATUS.CANCELLED_BY_PATIENT,
@@ -99,7 +100,7 @@ const updateBookingStatus = async ({ bookingId, statusId, note, actor }) => {
   }
 
   try {
-    return await withTransaction(async (db) => {
+    const response = await withTransaction(async (db) => {
       const targetLookup = await assertLookupKey(LOOKUP_TYPES.BOOKING_STATUS, normalizedStatusId, db);
       const [rows] = await db.query(
         `
@@ -177,6 +178,14 @@ const updateBookingStatus = async ({ bookingId, statusId, note, actor }) => {
         },
       };
     });
+
+    if (response.errCode === 0 && normalizedStatusId === BOOKING_STATUS.DOCTOR_CONFIRMED) {
+      dispatchReminderForBooking(normalizedBookingId).catch((error) => {
+        console.error("appointment reminder dispatch error:", error);
+      });
+    }
+
+    return response;
   } catch (error) {
     return { errCode: error.errCode || 1, errMessage: error.message || "Error from server" };
   }

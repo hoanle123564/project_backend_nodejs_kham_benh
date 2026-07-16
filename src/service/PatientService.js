@@ -498,7 +498,13 @@ const ListBookingForPatient = async (patientId) => {
           dr.id AS reviewId,
           vcs.statusId AS videoSessionStatusId,
           vcs.startedAt AS videoStartedAt,
-          vcs.endedAt AS videoEndedAt
+          vcs.endedAt AS videoEndedAt,
+          ar.remindAt,
+          ar.emailSentAt,
+          ar.smsSentAt,
+          ar.inAppNotifiedAt,
+          ar.smsSkippedAt,
+          ar.lastError AS reminderLastError
         FROM booking b
         INNER JOIN schedule s
           ON b.scheduleId = s.id
@@ -520,6 +526,8 @@ const ListBookingForPatient = async (patientId) => {
           ON dr.bookingId = b.id
         LEFT JOIN video_consultation_session vcs
           ON vcs.bookingId = b.id
+        LEFT JOIN appointment_reminders ar
+          ON ar.bookingId = b.id
         LEFT JOIN lookup ls
           ON b.statusId = ls.keyMap
          AND ls.type = 'STATUS'
