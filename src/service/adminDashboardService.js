@@ -1,19 +1,11 @@
 const moment = require("moment");
 const connection = require("../config/data");
 const { getDb } = require("./transactionService");
-const { calculateFinalPrice } = require("./doctor/doctorSchedulePolicy");
-
-const parsePriceToNumber = (priceText) => {
-    if (!priceText) return 0;
-    const rawNumber = String(priceText).replace(/[^\d]/g, "");
-    return Number(rawNumber) || 0;
-};
 
 const APPOINTMENT_TYPE = Object.freeze({
     OFFLINE: "AT1",
     ONLINE: "AT2",
 });
-
 const OPERATION_STATUS = Object.freeze({
     PENDING_CONFIRMATION: "pendingConfirmation",
     WAITING_EXAM: "waitingExam",
@@ -60,45 +52,11 @@ const getOperationalStatus = (bookingStatusId, visitStatusId) => {
     return OPERATION_STATUS.WAITING_EXAM;
 };
 
-const getDoctorPriceAtBooking = async (doctorId, appointmentTypeId = APPOINTMENT_TYPE.OFFLINE, db) => {
+const getSchedulePriceAtBooking = async (scheduleId, db) => {
     const executor = getDb(db);
     const [rows] = await executor.query(
         `
-        SELECT
-            offlinePrice.value_vi AS offlinePriceVi,
-            onlinePrice.value_vi AS onlinePriceVi
-        FROM doctor_info di
-        LEFT JOIN lookup offlinePrice
-            ON offlinePrice.keyMap = di.priceId
-           AND offlinePrice.type = 'PRICE'
-        LEFT JOIN lookup onlinePrice
-            ON onlinePrice.keyMap = di.onlinePriceId
-           AND onlinePrice.type = 'PRICE'
-        WHERE di.doctorId = ?
-        LIMIT 1
-        `,
-        [doctorId]
-    );
-
-    const priceRow = rows[0] || {};
-    const priceText =
-        appointmentTypeId === APPOINTMENT_TYPE.ONLINE
-            ? priceRow.onlinePriceVi
-            : priceRow.offlinePriceVi;
-
-    return parsePriceToNumber(priceText);
-};
-
-const getSchedulePriceAtBooking = async (
-    scheduleId,
-    doctorId,
-    appointmentTypeId = APPOINTMENT_TYPE.OFFLINE,
-    db
-) => {
-    const executor = getDb(db);
-    const [rows] = await executor.query(
-        `
-        SELECT price, discountPercent
+        SELECT price
         FROM schedule
         WHERE id = ?
         LIMIT 1
@@ -106,14 +64,8 @@ const getSchedulePriceAtBooking = async (
         [scheduleId]
     );
 
-    const schedulePrice = rows[0]?.price;
-    const discountPercent = Number(rows[0]?.discountPercent) || 0;
-    if (schedulePrice !== null && schedulePrice !== undefined && schedulePrice !== "") {
-        return calculateFinalPrice(Number(schedulePrice) || 0, discountPercent);
-    }
-
-    const defaultPrice = await getDoctorPriceAtBooking(doctorId, appointmentTypeId, executor);
-    return calculateFinalPrice(defaultPrice, discountPercent);
+    const schedulePrice = Number(rows[0]?.price);
+    return Number.isInteger(schedulePrice) && schedulePrice > 0 ? schedulePrice : 0;
 };
 
 const backfillBookingPrices = async () => {
@@ -123,33 +75,17 @@ const backfillBookingPrices = async () => {
         `
         SELECT
             b.id,
-            COALESCE(
-                s.price,
-                CASE
-                    WHEN s.appointmentTypeId = ?
-                    THEN onlinePrice.value_vi
-                    ELSE offlinePrice.value_vi
-                END
-            ) AS priceVi
+            s.price
         FROM booking b
         LEFT JOIN schedule s
             ON s.id = b.scheduleId
-        LEFT JOIN doctor_info di
-            ON di.doctorId = s.doctorId
-        LEFT JOIN lookup offlinePrice
-            ON offlinePrice.keyMap = di.priceId
-           AND offlinePrice.type = 'PRICE'
-        LEFT JOIN lookup onlinePrice
-            ON onlinePrice.keyMap = di.onlinePriceId
-           AND onlinePrice.type = 'PRICE'
         WHERE b.priceAtBooking IS NULL
            OR b.priceAtBooking = 0
-        `,
-        [APPOINTMENT_TYPE.ONLINE]
+        `
     );
 
     for (const row of rows) {
-        const price = parsePriceToNumber(row.priceVi);
+        const price = Number(row.price) || 0;
         await connection
             .promise()
             .query("UPDATE booking SET priceAtBooking = ? WHERE id = ?", [price, row.id]);
@@ -510,7 +446,6 @@ const getRecentBookings = async ({ page, limit }) => {
 };
 
 const getDashboardStatistics = async ({ revenueType, topDoctorType, recentPage, recentLimit }) => {
-    await backfillBookingPrices();
 
     const page = normalizePositiveInteger(recentPage, 1, Number.MAX_SAFE_INTEGER);
     const limit = normalizePositiveInteger(recentLimit, 5, 5);
@@ -550,9 +485,7 @@ const getDashboardStatistics = async ({ revenueType, topDoctorType, recentPage, 
 
 module.exports = {
     getOperationalStatus,
-    parsePriceToNumber,
     ensurePriceAtBookingColumn,
-    getDoctorPriceAtBooking,
     getSchedulePriceAtBooking,
     backfillBookingPrices,
     getDashboardStatistics,

@@ -5,15 +5,12 @@ const { sendAppointmentReminderSms } = require("./smsService");
 const { BOOKING_STATUS } = require("./workflowStatusService");
 
 const REMINDER_MINUTES_BEFORE = 30;
-const PROCESSING_TIMEOUT_MINUTES = 5;
 const DEFAULT_LIMIT = 20;
 const DB_TIMEZONE = process.env.DB_TIMEZONE || "+07:00";
 const APPOINTMENT_START_SQL = "TIMESTAMP(b.date, s.startTime)";
 const REMIND_AT_SQL = `DATE_SUB(${APPOINTMENT_START_SQL}, INTERVAL ${REMINDER_MINUTES_BEFORE} MINUTE)`;
 const UNFINISHED_SQL = `
-  (ar.inAppNotifiedAt IS NULL
-    OR ar.emailSentAt IS NULL
-    OR (ar.smsSentAt IS NULL AND ar.smsSkippedAt IS NULL))
+  (ar.emailSentAt IS NULL OR ar.smsSentAt IS NULL)
 `;
 
 let schedulerHandle = null;
@@ -31,9 +28,7 @@ const buildAppointmentStartAt = (date, startTime, timezone = DB_TIMEZONE) => {
 };
 
 const hasPendingReminderChannel = (reminder = {}) =>
-  !reminder.inAppNotifiedAt ||
-  !reminder.emailSentAt ||
-  (!reminder.smsSentAt && !reminder.smsSkippedAt);
+  !reminder.emailSentAt || !reminder.smsSentAt;
 
 const getReminderDecision = (booking = {}, now = new Date(), timezone = DB_TIMEZONE) => {
   const checkedAt = now instanceof Date ? now : new Date(now);
@@ -117,7 +112,6 @@ const getDueReminders = async ({ bookingId = null, limit = DEFAULT_LIMIT } = {})
   const [rows] = await connection.promise().query(
     `
       SELECT ar.id, ar.bookingId, ar.remindAt, ar.emailSentAt, ar.smsSentAt,
-             ar.inAppNotifiedAt, ar.smsSkippedAt,
              b.date, b.reason, b.statusId,
              s.startTime, s.endTime, s.timeType,
              ${APPOINTMENT_START_SQL} AS appointmentStartAt,
@@ -143,7 +137,6 @@ const getDueReminders = async ({ bookingId = null, limit = DEFAULT_LIMIT } = {})
         AND ar.remindAt <= NOW()
         AND ${APPOINTMENT_START_SQL} > NOW()
         AND ${UNFINISHED_SQL}
-        AND (ar.processingAt IS NULL OR ar.processingAt < DATE_SUB(NOW(), INTERVAL ${PROCESSING_TIMEOUT_MINUTES} MINUTE))
       ORDER BY ar.remindAt ASC, ar.id ASC
       LIMIT ?
     `,
@@ -153,32 +146,10 @@ const getDueReminders = async ({ bookingId = null, limit = DEFAULT_LIMIT } = {})
   return rows || [];
 };
 
-const claimReminder = async (reminderId) => {
-  const [result] = await connection.promise().query(
-    `
-      UPDATE appointment_reminders ar
-      INNER JOIN booking b ON b.id = ar.bookingId
-      INNER JOIN schedule s ON s.id = b.scheduleId
-      SET ar.processingAt = CURRENT_TIMESTAMP,
-          ar.lastError = NULL
-      WHERE ar.id = ?
-        AND b.statusId = ?
-        AND ar.remindAt <= NOW()
-        AND ${APPOINTMENT_START_SQL} > NOW()
-        AND ${UNFINISHED_SQL}
-        AND (ar.processingAt IS NULL OR ar.processingAt < DATE_SUB(NOW(), INTERVAL ${PROCESSING_TIMEOUT_MINUTES} MINUTE))
-    `,
-    [reminderId, BOOKING_STATUS.DOCTOR_CONFIRMED]
-  );
-
-  return result.affectedRows === 1;
-};
-
 const getReminderDetails = async (reminderId) => {
   const [rows] = await connection.promise().query(
     `
       SELECT ar.id, ar.bookingId, ar.remindAt, ar.emailSentAt, ar.smsSentAt,
-             ar.inAppNotifiedAt, ar.smsSkippedAt,
              b.date, b.reason, b.statusId,
              s.startTime, s.endTime, s.timeType,
              patient.email AS patientEmail,
@@ -209,17 +180,6 @@ const getReminderDetails = async (reminderId) => {
   return rows[0] || null;
 };
 
-const markInAppNotified = (reminderId) =>
-  connection.promise().query(
-    `
-      UPDATE appointment_reminders
-      SET inAppNotifiedAt = COALESCE(inAppNotifiedAt, CURRENT_TIMESTAMP),
-          updatedAt = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `,
-    [reminderId]
-  );
-
 const markEmailSent = (reminderId) =>
   connection.promise().query(
     `
@@ -242,28 +202,19 @@ const markSmsSent = (reminderId) =>
     [reminderId]
   );
 
-const markSmsSkipped = (reminderId) =>
-  connection.promise().query(
-    `
-      UPDATE appointment_reminders
-      SET smsSkippedAt = COALESCE(smsSkippedAt, CURRENT_TIMESTAMP),
-          updatedAt = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `,
-    [reminderId]
-  );
+const withReminderLock = async (reminderId, callback) => {
+  const db = await connection.promise().getConnection();
+  const lockName = `appointment-reminder:${reminderId}`;
 
-const finishReminderProcessing = (reminderId, errors = []) =>
-  connection.promise().query(
-    `
-      UPDATE appointment_reminders
-      SET processingAt = NULL,
-          lastError = ?,
-          updatedAt = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `,
-    [errors.length ? errors.join("; ").slice(0, 1000) : null, reminderId]
-  );
+  try {
+    const [rows] = await db.query("SELECT GET_LOCK(?, 0) AS locked", [lockName]);
+    if (Number(rows[0]?.locked) !== 1) return null;
+    return await callback();
+  } finally {
+    await db.query("SELECT RELEASE_LOCK(?)", [lockName]);
+    db.release();
+  }
+};
 
 const getPersonName = (firstName, lastName, fallback) =>
   [firstName, lastName].filter(Boolean).join(" ").trim() || fallback;
@@ -293,46 +244,36 @@ const buildReminderPayload = (reminder) => {
 };
 
 const processReminder = async (reminder) => {
-  const claimed = await claimReminder(reminder.id);
-  if (!claimed) return { bookingId: reminder.bookingId, skipped: true, reason: "CLAIM_FAILED" };
+  const result = await withReminderLock(reminder.id, async () => {
+    const freshReminder = await getReminderDetails(reminder.id);
+    if (!freshReminder) return { bookingId: reminder.bookingId, skipped: true, reason: "NO_LONGER_ELIGIBLE" };
 
-  const freshReminder = await getReminderDetails(reminder.id);
-  if (!freshReminder) {
-    await finishReminderProcessing(reminder.id, ["Reminder is no longer eligible"]);
-    return { bookingId: reminder.bookingId, skipped: true, reason: "NO_LONGER_ELIGIBLE" };
-  }
+    const errors = [];
+    const payload = buildReminderPayload(freshReminder);
 
-  const errors = [];
-  const payload = buildReminderPayload(freshReminder);
-
-  if (!freshReminder.inAppNotifiedAt) {
-    await markInAppNotified(freshReminder.id);
-  }
-
-  if (!freshReminder.emailSentAt) {
-    try {
-      await sendAppointmentReminderEmail(payload);
-      await markEmailSent(freshReminder.id);
-    } catch (error) {
-      errors.push(`email: ${error.message}`);
-    }
-  }
-
-  if (!freshReminder.smsSentAt && !freshReminder.smsSkippedAt) {
-    try {
-      const smsResult = await sendAppointmentReminderSms(payload);
-      if (smsResult.skipped) {
-        await markSmsSkipped(freshReminder.id);
-      } else {
-        await markSmsSent(freshReminder.id);
+    if (!freshReminder.emailSentAt) {
+      try {
+        await sendAppointmentReminderEmail(payload);
+        await markEmailSent(freshReminder.id);
+      } catch (error) {
+        errors.push(`email: ${error.message}`);
       }
-    } catch (error) {
-      errors.push(`sms: ${error.message}`);
     }
-  }
 
-  await finishReminderProcessing(freshReminder.id, errors);
-  return { bookingId: freshReminder.bookingId, sent: errors.length === 0, errors };
+    if (!freshReminder.smsSentAt) {
+      try {
+        await sendAppointmentReminderSms(payload);
+        await markSmsSent(freshReminder.id);
+      } catch (error) {
+        errors.push(`sms: ${error.message}`);
+      }
+    }
+
+    if (errors.length) console.error("appointment reminder delivery error:", errors.join("; "));
+    return { bookingId: freshReminder.bookingId, sent: errors.length === 0, errors };
+  });
+
+  return result || { bookingId: reminder.bookingId, skipped: true, reason: "LOCKED" };
 };
 
 const processDueReminders = async ({ bookingId = null, limit = DEFAULT_LIMIT } = {}) => {

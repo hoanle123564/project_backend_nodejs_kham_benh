@@ -20,18 +20,6 @@ const normalizeOptionalString = (value) => {
     return normalized || null;
 };
 
-const validateClinicTypeId = (clinicTypeId) => {
-    if (!clinicTypeId) {
-        return null;
-    }
-
-    if (!["CT1", "CT2"].includes(clinicTypeId)) {
-        return { errCode: 5, errMessage: "clinicTypeId must be CT1 or CT2" };
-    }
-
-    return null;
-};
-
 const normalizePositiveId = (value) => {
     const normalized = Number(value);
     return Number.isInteger(normalized) && normalized > 0 ? normalized : null;
@@ -145,7 +133,6 @@ const prepareClinicPayload = async (data, excludeId = null) => {
     const address = String(data?.address || "").trim();
     const slugSource = String(data?.slug || "").trim() || name;
     const slug = normalizeSlug(slugSource);
-    const clinicTypeId = normalizeOptionalString(data?.clinicTypeId);
     const provinceCode = normalizeOptionalString(data?.provinceCode);
     const districtCode = normalizeOptionalString(data?.districtCode);
     const wardCode = normalizeOptionalString(data?.wardCode);
@@ -170,11 +157,6 @@ const prepareClinicPayload = async (data, excludeId = null) => {
         return { error: { errCode: 4, errMessage: "isActive must be 0 or 1" } };
     }
 
-    const clinicTypeError = validateClinicTypeId(clinicTypeId);
-    if (clinicTypeError) {
-        return { error: clinicTypeError };
-    }
-
     const managerResult = await normalizeManagerUserId(data?.managerUserId);
     if (managerResult.error) {
         return { error: managerResult.error };
@@ -189,7 +171,6 @@ const prepareClinicPayload = async (data, excludeId = null) => {
             address,
             image: data?.image,
             banner_img: data?.banner_img || null,
-            clinicTypeId,
             managerUserId: managerResult.value,
             provinceCode,
             districtCode,
@@ -218,16 +199,15 @@ const createClinic = async (clinicData) => {
 
         await connection.promise().query(
             `INSERT INTO clinic
-             (name, slug, image, banner_img, address, clinicTypeId, managerUserId, provinceCode, districtCode, wardCode,
+             (name, slug, image, banner_img, address, managerUserId, provinceCode, districtCode, wardCode,
               isActive, displayOrder)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
                 payload.name,
                 payload.slug,
                 payload.image,
                 payload.banner_img,
                 payload.address,
-                payload.clinicTypeId,
                 payload.managerUserId,
                 payload.provinceCode,
                 payload.districtCode,
@@ -332,7 +312,7 @@ const getClinicDetail = async ({ id, slug, location }) => {
         const [doctorRows] = await connection.promise().query(
             `SELECT
                 di.id, di.doctorId, di.slug, di.isActive, di.displayOrder,
-                di.clinicId, c.clinicTypeId, c.address AS clinicAddress,
+                di.clinicId, c.address AS clinicAddress,
                 c.provinceCode, c.districtCode, c.wardCode,
                 COALESCE(lp.value_vi, c.provinceCode) AS province
              FROM doctor_info di
@@ -438,7 +418,6 @@ const editClinic = async (data) => {
                 ...data,
                 image: data?.image === undefined ? existingClinic.image : data.image,
                 banner_img: data?.banner_img === undefined ? existingClinic.banner_img : data.banner_img,
-                clinicTypeId: data?.clinicTypeId === undefined ? existingClinic.clinicTypeId : data.clinicTypeId,
                 managerUserId: data?.managerUserId === undefined ? existingClinic.managerUserId : data.managerUserId,
                 provinceCode: data?.provinceCode === undefined ? existingClinic.provinceCode : data.provinceCode,
                 districtCode: data?.districtCode === undefined ? existingClinic.districtCode : data.districtCode,
@@ -457,14 +436,13 @@ const editClinic = async (data) => {
 
         await connection.promise().query(
             `UPDATE clinic
-             SET name = ?, slug = ?, address = ?, clinicTypeId = ?, managerUserId = ?, provinceCode = ?,
+             SET name = ?, slug = ?, address = ?, managerUserId = ?, provinceCode = ?,
                  districtCode = ?, wardCode = ?, image = ?, banner_img = ?, isActive = ?, displayOrder = ?
              WHERE id = ?`,
             [
                 payload.name,
                 payload.slug,
                 payload.address,
-                payload.clinicTypeId,
                 payload.managerUserId,
                 payload.provinceCode,
                 payload.districtCode,

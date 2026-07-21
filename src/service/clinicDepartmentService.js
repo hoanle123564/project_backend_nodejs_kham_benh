@@ -72,7 +72,6 @@ const validateUniqueClinicSpecialty = async (clinicId, specialtyId, excludeId = 
 
 const buildDepartmentPayload = async (data, options = {}) => {
   const clinicId = normalizePositiveId(options.clinicId ?? data?.clinicId);
-  const description = normalizeOptionalString(data?.description);
   const specialtyId = normalizePositiveId(data?.specialtyId);
   const isActive = parseOptionalIsActive(data?.isActive, options.defaultIsActive ?? 1);
 
@@ -120,7 +119,6 @@ const buildDepartmentPayload = async (data, options = {}) => {
   return {
     payload: {
       clinicId,
-      description,
       specialtyId,
       isActive,
     },
@@ -145,7 +143,6 @@ const getClinicDepartment = async (query = {}) => {
           cd.clinicId,
           cd.specialtyId,
           s.name AS specialtyName,
-          cd.description,
           cd.isActive,
           cd.createdAt,
           cd.updatedAt,
@@ -191,13 +188,12 @@ const createClinicDepartment = async (data) => {
     await connection.promise().query(
       `
         INSERT INTO clinic_department
-          (clinicId, specialtyId, description, isActive)
-        VALUES (?, ?, ?, ?)
+          (clinicId, specialtyId, isActive)
+        VALUES (?, ?, ?)
       `,
       [
         payload.clinicId,
         payload.specialtyId,
-        payload.description,
         payload.isActive,
       ]
     );
@@ -263,12 +259,11 @@ const editClinicDepartment = async (data) => {
     await connection.promise().query(
       `
         UPDATE clinic_department
-        SET specialtyId = ?, description = ?, isActive = ?
+        SET specialtyId = ?, isActive = ?
         WHERE id = ?
       `,
       [
         payload.specialtyId,
-        payload.description,
         payload.isActive,
         departmentId,
       ]

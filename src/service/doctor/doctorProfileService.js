@@ -170,8 +170,8 @@ const getDetailDoctorById = async (query) => {
             SELECT
               di.id AS doctorInfoId, di.doctorId, di.slug, di.isActive, di.displayOrder,
               di.contentHTML, di.description,
-              di.priceId, di.onlinePriceId, di.paymentId, di.clinicId, di.specialtyId,
-              c.clinicTypeId, c.address AS clinicAddress, c.provinceCode, c.districtCode, c.wardCode,
+              di.clinicId, di.specialtyId,
+              c.address AS clinicAddress, c.provinceCode, c.districtCode, c.wardCode,
               COALESCE(lp.value_vi, c.provinceCode) AS province
             FROM doctor_info di
             LEFT JOIN clinic c
@@ -186,39 +186,6 @@ const getDetailDoctorById = async (query) => {
     const dc = clinicRows[0] || {};
 
     // LẤY GIÁ & PAYMENT
-    const [priceRows] = await connection.promise().query(
-      `
-            SELECT value_vi AS priceVi, value_en AS priceEn
-            FROM lookup
-            WHERE keyMap = ? AND type = 'PRICE'
-        `,
-      [dc.priceId]
-    );
-
-    const price = priceRows[0] || {};
-
-    const [onlinePriceRows] = await connection.promise().query(
-      `
-            SELECT value_vi AS onlinePriceVi, value_en AS onlinePriceEn
-            FROM lookup
-            WHERE keyMap = ? AND type = 'PRICE'
-        `,
-      [dc.onlinePriceId]
-    );
-
-    const onlinePrice = onlinePriceRows[0] || {};
-
-    const [paymentRows] = await connection.promise().query(
-      `
-            SELECT value_vi AS paymentVi, value_en AS paymentEn
-            FROM lookup
-            WHERE keyMap = ? AND type = 'PAYMENT'
-        `,
-      [dc.paymentId]
-    );
-
-    const payment = paymentRows[0] || {};
-
     // LẤY SPECIALTY
     const [specialtyRows] = await connection.promise().query(
       `
@@ -236,7 +203,7 @@ const getDetailDoctorById = async (query) => {
       `
             SELECT
               c.id AS clinicId, c.name AS clinicName, c.slug AS clinicSlug,
-              c.address AS clinicAddress, c.clinicTypeId, c.provinceCode, c.districtCode, c.wardCode,
+              c.address AS clinicAddress, c.provinceCode, c.districtCode, c.wardCode,
               COALESCE(lp.value_vi, c.provinceCode) AS province
             FROM clinic c
             LEFT JOIN lookup lp
@@ -252,9 +219,6 @@ const getDetailDoctorById = async (query) => {
     const data = {
       ...user,
       ...dc,
-      ...price,
-      ...onlinePrice,
-      ...payment,
       ...specialty,
       ...clinic,
     };
@@ -302,12 +266,6 @@ const getAllDoctorHome = async () => {
           di.slug,
           di.isActive,
           di.displayOrder,
-          di.priceId,
-          offlinePrice.value_vi AS priceVi,
-          offlinePrice.value_en AS priceEn,
-          di.onlinePriceId,
-          onlinePrice.value_vi AS onlinePriceVi,
-          onlinePrice.value_en AS onlinePriceEn,
           di.specialtyId,
           di.clinicId,
           s.slug AS specialtySlug,
@@ -315,7 +273,6 @@ const getAllDoctorHome = async () => {
           c.slug AS clinicSlug,
           c.name AS clinicName,
           c.address AS clinicAddress,
-          c.clinicTypeId,
           c.provinceCode,
           c.districtCode,
           c.wardCode,
@@ -325,10 +282,6 @@ const getAllDoctorHome = async () => {
           ON u.positionId = p.keyMap AND p.type = 'POSITION'
         LEFT JOIN doctor_info AS di
           ON di.doctorId = u.id
-        LEFT JOIN lookup AS offlinePrice
-          ON offlinePrice.keyMap = di.priceId AND offlinePrice.type = 'PRICE'
-        LEFT JOIN lookup AS onlinePrice
-          ON onlinePrice.keyMap = di.onlinePriceId AND onlinePrice.type = 'PRICE'
         LEFT JOIN specialty AS s
           ON s.id = di.specialtyId
         LEFT JOIN clinic AS c
@@ -373,8 +326,6 @@ const saveDetailInfoDoctor = async (data) => {
       !data ||
       !hasVisibleEditorContent(contentHTML) ||
       !data.doctorId ||
-      !data.priceId ||
-      !data.paymentId ||
       !data.specialtyId ||
       !data.clinicId ||
       !data.description
@@ -384,11 +335,7 @@ const saveDetailInfoDoctor = async (data) => {
       return status;
     }
 
-    const { doctorId, priceId, paymentId, clinicId, specialtyId, description } = data;
-    const onlinePriceId =
-      data.onlinePriceId && String(data.onlinePriceId).trim()
-        ? String(data.onlinePriceId).trim()
-        : null;
+    const { doctorId, clinicId, specialtyId, description } = data;
 
     console.log(">>> Save doctor detail:", data);
 
@@ -461,16 +408,13 @@ const saveDetailInfoDoctor = async (data) => {
         `
        UPDATE doctor_info
           SET contentHTML = ?, description = ?,
-              priceId = ?, onlinePriceId = ?, paymentId = ?, specialtyId = ?, clinicId = ?,
+              specialtyId = ?, clinicId = ?,
               slug = ?, isActive = ?, displayOrder = ?
           WHERE doctorId = ?
         `,
         [
           contentHTML,
           description || null,
-          priceId,
-          onlinePriceId,
-          paymentId,
           specialtyId,
           clinicId,
           slug,
@@ -484,8 +428,8 @@ const saveDetailInfoDoctor = async (data) => {
       await connection.promise().query(
         `
         INSERT INTO doctor_info
-          (doctorId, contentHTML, description, slug, isActive, displayOrder, priceId, onlinePriceId, paymentId, specialtyId, clinicId)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          (doctorId, contentHTML, description, slug, isActive, displayOrder, specialtyId, clinicId)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         `,
         [
           doctorId,
@@ -494,9 +438,6 @@ const saveDetailInfoDoctor = async (data) => {
           slug,
           isActive,
           displayOrder,
-          priceId,
-          onlinePriceId,
-          paymentId,
           specialtyId,
           clinicId,
         ]

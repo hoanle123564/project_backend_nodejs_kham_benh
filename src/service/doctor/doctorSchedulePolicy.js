@@ -45,22 +45,10 @@ const normalizeDate = (dateValue) => {
 
 const isPositiveInteger = (value) => Number.isInteger(Number(value)) && Number(value) > 0;
 
-const normalizeNonNegativeInteger = (value, fallback = null) => {
-  if (value === undefined || value === null || value === "") return fallback;
-  const number = Number(value);
-  return Number.isInteger(number) && number >= 0 ? number : null;
-};
-
 const normalizeCapacity = (value, fallback = 1) => {
   if (value === undefined || value === null || value === "") return fallback;
   const number = Number(value);
   return Number.isInteger(number) && number >= 1 ? number : null;
-};
-
-const normalizeDiscount = (value, fallback = 0) => {
-  if (value === undefined || value === null || value === "") return fallback;
-  const number = Number(value);
-  return Number.isFinite(number) && number >= 0 && number <= 100 ? number : null;
 };
 
 const normalizePrice = (value, fallback = null) => {
@@ -111,37 +99,15 @@ const isScheduleStarted = (schedule, now = new Date()) => {
   return moment(`${date} ${start}`, "YYYY-MM-DD HH:mm:ss").isSameOrBefore(moment(now));
 };
 
-const isDateInBookingWindow = (scheduleDate, minDays = 0, maxDays = null, now = new Date()) => {
-  const date = normalizeDate(scheduleDate);
-  if (!date) return false;
-  const today = moment(now).startOf("day");
-  const target = moment(date, "YYYY-MM-DD").startOf("day");
-  const diff = target.diff(today, "days");
-  const min = Number(minDays) || 0;
-  const max = maxDays === null || maxDays === undefined || maxDays === "" ? null : Number(maxDays);
-  if (diff < min) return false;
-  return max === null || diff <= max;
-};
-
-const calculateFinalPrice = (basePrice, discountPercent = 0) => {
-  const base = Math.max(0, Number(basePrice) || 0);
-  const discount = Math.max(0, Math.min(100, Number(discountPercent) || 0));
-  return Math.max(0, Math.round(base * (100 - discount) / 100));
-};
-
 const validateRulePayload = (data = {}) => {
   const errors = [];
   const ruleType = String(data.ruleType || "").trim().toUpperCase();
-  const isFullDay = Number(data.isFullDay) === 1 || data.isFullDay === true;
-  const startTime = isFullDay ? "00:00:00" : normalizeTime(data.startTime);
-  const endTime = isFullDay ? "23:59:59" : normalizeTime(data.endTime);
+  const startTime = normalizeTime(data.startTime);
+  const endTime = normalizeTime(data.endTime);
   const slotDurationMinutes =
     ruleType === RULE_TYPES.OFF ? null : normalizeCapacity(data.slotDurationMinutes, null);
   const capacity = ruleType === RULE_TYPES.OFF ? null : normalizeCapacity(data.capacity, 1);
   const price = normalizePrice(data.price, null);
-  const discountPercent = normalizeDiscount(data.discountPercent, 0);
-  const minBookingNoticeDays = normalizeNonNegativeInteger(data.minBookingNoticeDays, 0);
-  const maxBookingAheadDays = normalizeNonNegativeInteger(data.maxBookingAheadDays, 30);
   const weekday = data.weekday === undefined || data.weekday === null || data.weekday === ""
     ? null
     : Number(data.weekday);
@@ -160,12 +126,7 @@ const validateRulePayload = (data = {}) => {
   }
   if (ruleType !== RULE_TYPES.OFF && !slotDurationMinutes) errors.push("slotDurationMinutes must be >= 1");
   if (ruleType !== RULE_TYPES.OFF && !capacity) errors.push("capacity must be >= 1");
-  if (price === null && data.price !== undefined && data.price !== null && data.price !== "") errors.push("price must be >= 0");
-  if (discountPercent === null) errors.push("discountPercent must be 0..100");
-  if (minBookingNoticeDays === null) errors.push("minBookingNoticeDays must be >= 0");
-  if (maxBookingAheadDays === null || maxBookingAheadDays < minBookingNoticeDays) {
-    errors.push("maxBookingAheadDays must be >= minBookingNoticeDays");
-  }
+  if (ruleType !== RULE_TYPES.OFF && !isPositiveInteger(price)) errors.push("price must be a positive integer");
   if (appointmentTypeId && !APPOINTMENT_TYPES.includes(appointmentTypeId)) {
     errors.push("appointmentTypeId must be AT1 or AT2");
   }
@@ -182,11 +143,7 @@ const validateRulePayload = (data = {}) => {
       endTime,
       slotDurationMinutes,
       capacity,
-      minBookingNoticeDays,
-      maxBookingAheadDays,
       price,
-      discountPercent,
-      isFullDay: isFullDay ? 1 : 0,
       isActive: data.isActive === undefined ? 1 : Number(data.isActive) ? 1 : 0,
     },
   };
@@ -196,10 +153,8 @@ module.exports = {
   RULE_TYPES,
   SOURCE_TYPES,
   APPOINTMENT_TYPES,
-  calculateFinalPrice,
   generateSlots,
   getTimeLabel,
-  isDateInBookingWindow,
   isScheduleStarted,
   normalizeDate,
   normalizeTime,

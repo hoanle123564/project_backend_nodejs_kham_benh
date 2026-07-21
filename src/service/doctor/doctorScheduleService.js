@@ -1,6 +1,5 @@
 const connection = require("../../config/data");
 const moment = require("moment");
-const { getDoctorPriceAtBooking, parsePriceToNumber } = require("../adminDashboardService");
 const { getDb, withTransaction } = require("../transactionService");
 const {
   buildCapacitySummary,
@@ -11,10 +10,8 @@ const {
   APPOINTMENT_TYPES,
   RULE_TYPES,
   SOURCE_TYPES,
-  calculateFinalPrice,
   generateSlots,
   getTimeLabel,
-  isDateInBookingWindow,
   isScheduleStarted,
   normalizeDate,
   normalizeTime,
@@ -23,7 +20,7 @@ const {
 } = require("./doctorSchedulePolicy");
 
 const DEFAULT_APPOINTMENT_TYPE_ID = "AT1";
-const DEFAULT_MAX_BOOKING_AHEAD_DAYS = 30;
+const MATERIALIZATION_LOOKAHEAD_DAYS = 30;
 const DYNAMIC_TIME_TYPE_PREFIX = "D";
 const CAPACITY_EXCLUDED_STATUS_IDS = getCapacityExcludedStatusIds();
 
@@ -36,30 +33,18 @@ const normalizePositiveId = (value) => {
 
 const normalizeSchedulePrice = (value) => {
   if (value === undefined || value === null || value === "") {
-    return { ok: true, value: null, provided: false };
+    return { ok: false, value: null };
   }
 
   const price = Number(value);
-  if (!Number.isFinite(price) || price < 0 || !Number.isInteger(price)) {
-    return { ok: false, value: null, provided: true };
+  if (!Number.isFinite(price) || price <= 0 || !Number.isInteger(price)) {
+    return { ok: false, value: null };
   }
 
-  return { ok: true, value: price, provided: true };
+  return { ok: true, value: price };
 };
 
-const resolveSchedulePriceForSave = async (doctorId, appointmentTypeId, value, db) => {
-  const normalized = normalizeSchedulePrice(value);
-  if (!normalized.ok || normalized.provided) {
-    return normalized;
-  }
-
-  const defaultPrice = await getDoctorPriceAtBooking(doctorId, appointmentTypeId, db);
-  return {
-    ok: true,
-    value: defaultPrice > 0 ? defaultPrice : null,
-    provided: false,
-  };
-};
+const resolveSchedulePriceForSave = async (_doctorId, _appointmentTypeId, value) => normalizeSchedulePrice(value);
 
 const normalizeAppointmentType = (value, fallback = DEFAULT_APPOINTMENT_TYPE_ID) => {
   const appointmentTypeId = value ? String(value).trim() : fallback;
@@ -119,14 +104,7 @@ const normalizeRuleRow = (row = {}) => ({
     row.slotDurationMinutes === null || row.slotDurationMinutes === undefined
       ? null
       : Number(row.slotDurationMinutes),
-  minBookingNoticeDays: Number(row.minBookingNoticeDays) || 0,
-  maxBookingAheadDays:
-    row.maxBookingAheadDays === null || row.maxBookingAheadDays === undefined
-      ? DEFAULT_MAX_BOOKING_AHEAD_DAYS
-      : Number(row.maxBookingAheadDays),
   price: row.price === null || row.price === undefined ? null : Number(row.price),
-  discountPercent: Number(row.discountPercent) || 0,
-  isFullDay: Number(row.isFullDay) ? 1 : 0,
   isActive: Number(row.isActive) ? 1 : 0,
 });
 
@@ -312,13 +290,7 @@ const buildDesiredSlotsFromRules = (rules, date) => {
           endTime: slot.endTime,
           timeType: buildDynamicTimeType(slot.startTime, slot.endTime),
           capacity: Number(rule.capacity) || 1,
-          minBookingNoticeDays: Number(rule.minBookingNoticeDays) || 0,
-          maxBookingAheadDays:
-            rule.maxBookingAheadDays === null || rule.maxBookingAheadDays === undefined
-              ? DEFAULT_MAX_BOOKING_AHEAD_DAYS
-              : Number(rule.maxBookingAheadDays),
           price: rule.price === null || rule.price === undefined ? null : Number(rule.price),
-          discountPercent: Number(rule.discountPercent) || 0,
           sourceType: flexibleRules.length ? SOURCE_TYPES.FLEXIBLE : SOURCE_TYPES.FIXED,
           sourceRuleId: rule.id || null,
         });
@@ -327,14 +299,6 @@ const buildDesiredSlotsFromRules = (rules, date) => {
   });
 
   return desired;
-};
-
-const getDefaultPricesByType = async (doctorId, db) => {
-  const prices = {};
-  for (const appointmentTypeId of APPOINTMENT_TYPES) {
-    prices[appointmentTypeId] = await getDoctorPriceAtBooking(doctorId, appointmentTypeId, db);
-  }
-  return prices;
 };
 
 const inferScheduleTimes = (row = {}) => {
@@ -350,14 +314,10 @@ const inferScheduleTimes = (row = {}) => {
   };
 };
 
-const mapScheduleResponseRow = (row, defaultPrices = {}) => {
+const mapScheduleResponseRow = (row) => {
   const times = inferScheduleTimes(row);
   const capacitySummary = buildCapacitySummary(row.bookedCount, row.capacity);
-  const basePrice =
-    row.price !== null && row.price !== undefined
-      ? Number(row.price)
-      : Number(defaultPrices[row.appointmentTypeId || DEFAULT_APPOINTMENT_TYPE_ID]) || 0;
-  const effectivePrice = calculateFinalPrice(basePrice, row.discountPercent);
+  const effectivePrice = Number(row.price) || 0;
   const response = {
     ...row,
     startTime: times.startTime,
@@ -365,15 +325,13 @@ const mapScheduleResponseRow = (row, defaultPrices = {}) => {
     value_vi: times.startTime && times.endTime ? getTimeLabel(times) : row.value_vi,
     value_en: times.startTime && times.endTime ? getTimeLabel(times) : row.value_en,
     price: row.price !== null && row.price !== undefined ? Number(row.price) : null,
-    defaultPrice: Number(defaultPrices[row.appointmentTypeId || DEFAULT_APPOINTMENT_TYPE_ID]) || 0,
     effectivePrice,
-    discountPercent: Number(row.discountPercent) || 0,
     isActive: Number(row.isActive) ? 1 : 0,
     isBookable:
       Number(row.isActive) === 1 &&
       capacitySummary.remaining > 0 &&
       !isScheduleStarted({ ...row, startTime: times.startTime }) &&
-      isDateInBookingWindow(row.date, row.minBookingNoticeDays, row.maxBookingAheadDays)
+      effectivePrice > 0
         ? 1
         : 0,
     ...capacitySummary,
@@ -399,20 +357,13 @@ const getScheduleRowsForDate = async (doctorId, date, db, options = {}) => {
         COALESCE(s.isActive, 1) AS isActive,
         COALESCE(s.sourceType, 'LEGACY') AS sourceType,
         s.sourceRuleId,
-        COALESCE(s.minBookingNoticeDays, 0) AS minBookingNoticeDays,
-        COALESCE(s.maxBookingAheadDays, ?) AS maxBookingAheadDays,
         s.price,
-        COALESCE(s.discountPercent, 0) AS discountPercent,
         COALESCE(activeBooking.bookedCount, 0) AS bookedCount,
         a.value_vi,
         a.value_en,
         appointmentType.value_vi AS appointmentTypeVi,
-        appointmentType.value_en AS appointmentTypeEn,
-        offlinePrice.value_vi AS defaultOfflinePrice,
-        onlinePrice.value_vi AS defaultOnlinePrice
+        appointmentType.value_en AS appointmentTypeEn
       FROM schedule AS s
-      LEFT JOIN doctor_info AS di
-        ON di.doctorId = s.doctorId
       LEFT JOIN (
         SELECT scheduleId, COUNT(*) AS bookedCount
         FROM booking
@@ -424,23 +375,14 @@ const getScheduleRowsForDate = async (doctorId, date, db, options = {}) => {
         ON s.timeType = a.keyMap AND a.type = 'TIME'
       LEFT JOIN lookup AS appointmentType
         ON s.appointmentTypeId = appointmentType.keyMap AND appointmentType.type = 'APPOINTMENT_TYPE'
-      LEFT JOIN lookup AS offlinePrice
-        ON offlinePrice.keyMap = di.priceId AND offlinePrice.type = 'PRICE'
-      LEFT JOIN lookup AS onlinePrice
-        ON onlinePrice.keyMap = di.onlinePriceId AND onlinePrice.type = 'PRICE'
       WHERE s.doctorId = ? AND s.date = ?
         ${options.onlyActive ? "AND COALESCE(s.isActive, 1) = 1" : ""}
       ORDER BY COALESCE(s.startTime, a.value_vi, s.timeType) ASC, s.id ASC
     `,
-    [DEFAULT_MAX_BOOKING_AHEAD_DAYS, ...CAPACITY_EXCLUDED_STATUS_IDS, doctorId, normalizedDate]
+    [...CAPACITY_EXCLUDED_STATUS_IDS, doctorId, normalizedDate]
   );
 
-  const defaultPrices = {
-    AT1: parsePriceToNumber(rows[0]?.defaultOfflinePrice),
-    AT2: parsePriceToNumber(rows[0]?.defaultOnlinePrice),
-  };
-
-  return rows.map((row) => mapScheduleResponseRow(row, defaultPrices));
+  return rows.map(mapScheduleResponseRow);
 };
 
 const loadExistingSchedulesForDate = async (doctorId, date, db, options = {}) => {
@@ -460,9 +402,6 @@ const loadExistingSchedulesForDate = async (doctorId, date, db, options = {}) =>
         COALESCE(s.isActive, 1) AS isActive,
         COALESCE(s.sourceType, 'LEGACY') AS sourceType,
         s.sourceRuleId,
-        COALESCE(s.minBookingNoticeDays, 0) AS minBookingNoticeDays,
-        COALESCE(s.maxBookingAheadDays, ?) AS maxBookingAheadDays,
-        COALESCE(s.discountPercent, 0) AS discountPercent,
         s.price,
         lt.value_vi,
         lt.value_en
@@ -473,7 +412,7 @@ const loadExistingSchedulesForDate = async (doctorId, date, db, options = {}) =>
       ORDER BY COALESCE(s.startTime, lt.value_vi, s.timeType) ASC, s.id ASC
       ${options.forUpdate ? "FOR UPDATE" : ""}
     `,
-    [DEFAULT_MAX_BOOKING_AHEAD_DAYS, doctorId, normalizedDate]
+    [doctorId, normalizedDate]
   );
 
   return rows.map((row) => ({
@@ -590,28 +529,26 @@ const computeImpactForDesiredSlots = async (doctorId, date, desiredSlots, db, op
   };
 };
 
-const upsertDesiredSlots = async (desiredSlots, db, defaultPrices) => {
+const upsertDesiredSlots = async (desiredSlots, db) => {
   for (const slot of desiredSlots.values()) {
-    const fallbackPrice = Number(defaultPrices[slot.appointmentTypeId]) || 0;
-    const price = slot.price === null || slot.price === undefined ? fallbackPrice : Number(slot.price);
+    const price = Number(slot.price);
+    if (!Number.isInteger(price) || price <= 0) {
+      throw new Error("Schedule rule price must be a positive integer");
+    }
     await db.query(
       `
         INSERT INTO schedule (
           doctorId, date, timeType, appointmentTypeId, startTime, endTime,
-          capacity, isActive, sourceType, sourceRuleId, minBookingNoticeDays,
-          maxBookingAheadDays, price, discountPercent
+          capacity, isActive, sourceType, sourceRuleId, price
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
         ON DUPLICATE KEY UPDATE
           timeType = VALUES(timeType),
           capacity = VALUES(capacity),
           isActive = 1,
           sourceType = VALUES(sourceType),
           sourceRuleId = VALUES(sourceRuleId),
-          minBookingNoticeDays = VALUES(minBookingNoticeDays),
-          maxBookingAheadDays = VALUES(maxBookingAheadDays),
           price = VALUES(price),
-          discountPercent = VALUES(discountPercent),
           updatedAt = CURRENT_TIMESTAMP
       `,
       [
@@ -624,10 +561,7 @@ const upsertDesiredSlots = async (desiredSlots, db, defaultPrices) => {
         slot.capacity,
         slot.sourceType,
         slot.sourceRuleId,
-        slot.minBookingNoticeDays,
-        slot.maxBookingAheadDays,
         price,
-        slot.discountPercent,
       ]
     );
   }
@@ -684,9 +618,7 @@ const materializeScheduleForDate = async (doctorId, date, options = {}) => {
       db,
       { forUpdate: options.applyBookingImpact, ...governance }
     );
-    const defaultPrices = await getDefaultPricesByType(normalizedDoctorId, db);
-
-    await upsertDesiredSlots(desiredSlots, db, defaultPrices);
+    await upsertDesiredSlots(desiredSlots, db);
     await deactivateInvalidSchedules(impact, db);
 
     if (options.applyBookingImpact) {
@@ -729,11 +661,7 @@ const getMaterializationDatesForRule = async (rule, previousRule, db) => {
 
   const fixedRules = rules.filter((item) => item.ruleType === RULE_TYPES.FIXED);
   if (fixedRules.length) {
-    const maxAheadDays = Math.max(
-      DEFAULT_MAX_BOOKING_AHEAD_DAYS,
-      ...fixedRules.map((item) => Number(item.maxBookingAheadDays) || DEFAULT_MAX_BOOKING_AHEAD_DAYS)
-    );
-    const maxDate = today.clone().add(maxAheadDays, "days").format("YYYY-MM-DD");
+    const maxDate = today.clone().add(MATERIALIZATION_LOOKAHEAD_DAYS, "days").format("YYYY-MM-DD");
     const doctorId = fixedRules[0].doctorId;
 
     const [scheduleDates] = await executor.query(
@@ -834,10 +762,9 @@ const insertScheduleRule = async (rule, actorId, db) => {
     `
       INSERT INTO doctor_schedule_rule (
         doctorId, ruleType, weekday, date, appointmentTypeId, startTime, endTime,
-        slotDurationMinutes, capacity, minBookingNoticeDays, maxBookingAheadDays,
-        price, discountPercent, isFullDay, isActive, createdBy
+        slotDurationMinutes, capacity, price, isActive, createdBy
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
     [
       rule.doctorId,
@@ -849,11 +776,7 @@ const insertScheduleRule = async (rule, actorId, db) => {
       rule.endTime,
       rule.slotDurationMinutes,
       rule.capacity,
-      rule.minBookingNoticeDays,
-      rule.maxBookingAheadDays,
       rule.price,
-      rule.discountPercent,
-      rule.isFullDay,
       rule.isActive,
       actorId || null,
     ]
@@ -867,9 +790,8 @@ const updateScheduleRuleRow = async (rule, db) => {
     `
       UPDATE doctor_schedule_rule
       SET ruleType = ?, weekday = ?, date = ?, appointmentTypeId = ?, startTime = ?,
-          endTime = ?, slotDurationMinutes = ?, capacity = ?, minBookingNoticeDays = ?,
-          maxBookingAheadDays = ?, price = ?, discountPercent = ?, isFullDay = ?,
-          isActive = ?, updatedAt = CURRENT_TIMESTAMP
+          endTime = ?, slotDurationMinutes = ?, capacity = ?, price = ?, isActive = ?,
+          updatedAt = CURRENT_TIMESTAMP
       WHERE id = ?
     `,
     [
@@ -881,11 +803,7 @@ const updateScheduleRuleRow = async (rule, db) => {
       rule.endTime,
       rule.slotDurationMinutes,
       rule.capacity,
-      rule.minBookingNoticeDays,
-      rule.maxBookingAheadDays,
       rule.price,
-      rule.discountPercent,
-      rule.isFullDay,
       rule.isActive,
       rule.id,
     ]
@@ -1028,7 +946,7 @@ const PostScheduleDoctor = async (data) => {
       data.price
     );
     if (!schedulePrice.ok) {
-      return { errCode: 2, errMessage: "Schedule price must be a valid non-negative integer", data: [] };
+      return { errCode: 2, errMessage: "Schedule price must be a positive integer", data: [] };
     }
 
     const rows = data.timeType
@@ -1118,7 +1036,7 @@ const updateScheduleDoctor = async (data) => {
     const id = normalizePositiveId(data.id);
     const normalized = normalizeSchedulePrice(data.price);
     if (!id || !normalized.ok) {
-      return { errCode: 2, errMessage: "Schedule price must be a valid non-negative integer" };
+      return { errCode: 2, errMessage: "Schedule price must be a positive integer" };
     }
 
     await connection.promise().query(

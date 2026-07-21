@@ -27,7 +27,6 @@ const rowToSession = (row) => {
     lastAiResult: parseJson(row.lastAiResult, null),
     createdAt: row.createdAt || null,
     updatedAt: row.updatedAt || null,
-    expiresAt: row.expiresAt || null,
   };
 };
 
@@ -41,7 +40,6 @@ const createSessionObject = (sessionId, patientId) => ({
   selectedScheduleId: null,
   bookingId: null,
   lastAiResult: null,
-  expiresAt: null,
 });
 
 const sessionListItem = (session) => ({
@@ -172,8 +170,7 @@ const saveSession = async (session) => {
           selectedDoctorId = ?,
           selectedScheduleId = ?,
           bookingId = ?,
-          lastAiResult = ?,
-          expiresAt = ?
+          lastAiResult = ?
       WHERE sessionId = ?
     `,
     [
@@ -185,7 +182,6 @@ const saveSession = async (session) => {
       session.selectedScheduleId || null,
       session.bookingId || null,
       session.lastAiResult ? JSON.stringify(session.lastAiResult) : null,
-      session.expiresAt || null,
       session.sessionId,
     ]
   );

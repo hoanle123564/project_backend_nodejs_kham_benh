@@ -160,7 +160,7 @@ const getSpecialtyDetail = async ({ id, slug, location }) => {
         const [doctorRows] = await connection.promise().query(
             `SELECT
                 di.id, di.doctorId, di.slug, di.isActive, di.displayOrder,
-                di.clinicId, c.clinicTypeId, c.address AS clinicAddress,
+                di.clinicId, c.address AS clinicAddress,
                 c.provinceCode, c.districtCode, c.wardCode,
                 COALESCE(lp.value_vi, c.provinceCode) AS province
              FROM doctor_info di

@@ -10,7 +10,6 @@ const {
   isOnlineConsultation,
   splitTimeRange,
   formatDate,
-  parseMoney,
   buildDoctorName,
 } = require("./chatUtils");
 
@@ -197,9 +196,15 @@ const findDoctorsFromCollectedInfo = async (collectedInfo = {}, debugStats = nul
         c.provinceCode,
         c.address AS clinicAddress,
         COALESCE(lp.value_vi, c.provinceCode) AS city,
-        di.onlinePriceId,
-        offlinePrice.value_vi AS offlinePrice,
-        onlinePrice.value_vi AS onlinePrice
+        EXISTS (
+          SELECT 1
+          FROM doctor_schedule_rule dsr
+          WHERE dsr.doctorId = u.id
+            AND dsr.ruleType IN ('FIXED', 'FLEXIBLE')
+            AND dsr.appointmentTypeId = 'AT2'
+            AND dsr.isActive = 1
+            AND dsr.price > 0
+        ) AS supportsOnline
       FROM users u
       INNER JOIN doctor_info di
         ON di.doctorId = u.id
@@ -211,10 +216,6 @@ const findDoctorsFromCollectedInfo = async (collectedInfo = {}, debugStats = nul
         ON lp.keyMap = c.provinceCode AND lp.type = 'PROVINCE'
       LEFT JOIN lookup p
         ON p.keyMap = u.positionId AND p.type = 'POSITION'
-      LEFT JOIN lookup offlinePrice
-        ON offlinePrice.keyMap = di.priceId AND offlinePrice.type = 'PRICE'
-      LEFT JOIN lookup onlinePrice
-        ON onlinePrice.keyMap = di.onlinePriceId AND onlinePrice.type = 'PRICE'
       WHERE ${whereClauses.join(" AND ")}
       ORDER BY di.displayOrder ASC, u.createdAt DESC
       LIMIT 20
@@ -223,7 +224,7 @@ const findDoctorsFromCollectedInfo = async (collectedInfo = {}, debugStats = nul
   );
 
   const candidateRows = isOnlineConsultation(collectedInfo)
-    ? rows.filter((row) => row.onlinePriceId)
+    ? rows.filter((row) => Number(row.supportsOnline) === 1)
     : rows;
 
   if (debugStats) {
@@ -264,8 +265,8 @@ const findDoctorsFromCollectedInfo = async (collectedInfo = {}, debugStats = nul
       name: buildDoctorName(row),
       specialty: row.specialty,
       city: row.city || row.provinceCode || row.clinicAddress || "",
-      supports_online: Boolean(row.onlinePriceId),
-      price: parseMoney(online ? row.onlinePrice : row.offlinePrice),
+      supports_online: Number(row.supportsOnline) === 1,
+      price: Number(slots[0]?.effectivePrice) || null,
       available_slots: slots,
     });
 

@@ -30,8 +30,7 @@ assert.strictEqual(
   getReminderDecision({
     ...booking,
     emailSentAt: "2026-07-14T07:30:01+07:00",
-    smsSkippedAt: "2026-07-14T07:30:01+07:00",
-    inAppNotifiedAt: "2026-07-14T07:30:01+07:00",
+    smsSentAt: "2026-07-14T07:30:01+07:00",
   }, "2026-07-14T07:40:00+07:00").reason,
   "ALREADY_SENT"
 );
@@ -47,7 +46,7 @@ assert.strictEqual(
   getReminderDecision(booking, "2026-07-14T08:00:00+07:00").reason,
   "APPOINTMENT_STARTED"
 );
-assert.strictEqual(hasPendingReminderChannel({ emailSentAt: 1, smsSentAt: 1, inAppNotifiedAt: 1 }), false);
+assert.strictEqual(hasPendingReminderChannel({ emailSentAt: 1, smsSentAt: 1 }), false);
 assert.strictEqual(normalizePhoneForSpeedSms("0912 345 678"), "0912345678");
 assert.strictEqual(normalizePhoneForSpeedSms("+84912345678"), "+84912345678");
 assert.strictEqual(normalizePhoneForSpeedSms("not-a-phone"), null);
@@ -74,6 +73,8 @@ https.request = (options, callback) => {
 };
 
 process.env.SPEEDSMS_ACCESS_TOKEN = "test-token";
+process.env.SPEEDSMS_SMS_TYPE = "2";
+process.env.SPEEDSMS_SENDER = "";
 sendAppointmentReminderSms({ toPhone: "0912 345 678", message: "Reminder" })
   .then((result) => {
     assert.deepStrictEqual(result, { sent: true, id: "test-id" });

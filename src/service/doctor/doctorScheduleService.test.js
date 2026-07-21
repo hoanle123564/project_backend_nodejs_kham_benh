@@ -14,10 +14,7 @@ const baseFixed = {
   endTime: "09:00:00",
   slotDurationMinutes: 30,
   capacity: 2,
-  minBookingNoticeDays: 0,
-  maxBookingAheadDays: 30,
   price: 100000,
-  discountPercent: 0,
   isActive: 1,
 };
 

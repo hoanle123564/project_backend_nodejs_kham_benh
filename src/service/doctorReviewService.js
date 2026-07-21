@@ -178,9 +178,6 @@ const formatReviewRow = (row = {}) => ({
   comment: row.comment || "",
   statusId: row.statusId,
   isHidden: row.statusId === REVIEW_STATUS.HIDDEN,
-  hiddenReason: row.hiddenReason || null,
-  hiddenBy: row.hiddenBy || null,
-  hiddenAt: row.hiddenAt || null,
   createdAt: row.createdAt,
   updatedAt: row.updatedAt,
   appointmentDate: row.appointmentDate || null,
@@ -211,7 +208,7 @@ const formatReviewRow = (row = {}) => ({
 const selectReviewSql = `
   SELECT
     dr.id, dr.bookingId, dr.patientId, dr.doctorId, dr.rating, dr.comment,
-    dr.statusId, dr.hiddenReason, dr.hiddenBy, dr.hiddenAt, dr.createdAt, dr.updatedAt,
+    dr.statusId, dr.createdAt, dr.updatedAt,
     b.date AS appointmentDate,
     COALESCE(lt.value_vi, CONCAT(TIME_FORMAT(s.startTime, '%H:%i'), ' - ', TIME_FORMAT(s.endTime, '%H:%i'))) AS timeVi,
     COALESCE(lt.value_en, CONCAT(TIME_FORMAT(s.startTime, '%H:%i'), ' - ', TIME_FORMAT(s.endTime, '%H:%i'))) AS timeEn,
@@ -597,9 +594,6 @@ const updateReviewVisibility = async (user, reviewIdValue, payload = {}) => {
   if (payload.hidden !== true && payload.hidden !== false) {
     return fail("hidden must be true or false");
   }
-  const reason = payload.hidden ? normalizeLimitedText(payload.reason, "Hidden reason") : { ok: true, value: null };
-  if (!reason.ok) return fail(reason.errMessage);
-
   return withTransaction(async (db) => {
     const [rows] = await db.query(
       `SELECT id, statusId FROM doctor_reviews WHERE id = ? LIMIT 1 FOR UPDATE`,
@@ -611,25 +605,10 @@ const updateReviewVisibility = async (user, reviewIdValue, payload = {}) => {
     const nextStatusId = payload.hidden ? REVIEW_STATUS.HIDDEN : REVIEW_STATUS.VISIBLE;
     await assertLookupKey(LOOKUP_TYPES.REVIEW_STATUS, nextStatusId, db);
     if (review.statusId !== nextStatusId) {
-      if (payload.hidden) {
-        await db.query(
-          `
-            UPDATE doctor_reviews
-            SET statusId = ?, hiddenReason = ?, hiddenBy = ?, hiddenAt = CURRENT_TIMESTAMP
-            WHERE id = ?
-          `,
-          [nextStatusId, reason.value, user.id, reviewId]
-        );
-      } else {
-        await db.query(
-          `
-            UPDATE doctor_reviews
-            SET statusId = ?, hiddenReason = NULL, hiddenBy = NULL, hiddenAt = NULL
-            WHERE id = ?
-          `,
-          [nextStatusId, reviewId]
-        );
-      }
+      await db.query(
+        "UPDATE doctor_reviews SET statusId = ? WHERE id = ?",
+        [nextStatusId, reviewId]
+      );
     }
 
     return ok(await getReviewById(reviewId, db));
