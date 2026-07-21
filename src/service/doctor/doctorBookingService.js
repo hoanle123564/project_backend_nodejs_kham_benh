@@ -2,6 +2,7 @@ const connection = require("../../config/data");
 const { sendResultEmail } = require("../emailService");
 const { getBookingListScope } = require("../clinicAccessService");
 const { normalizeDate } = require("./doctorScheduleService");
+const { getPublicPaymentStatus } = require("../paymentService");
 
 const GetListPatientForDoctor = async (doctorId, date) => {
   const status = {};
@@ -113,7 +114,7 @@ const sendRemedy = async (data) => {
       await connection.promise().query(
         `
           UPDATE booking
-          SET statusId = 'S3', statusUpdatedAt = CURRENT_TIMESTAMP
+          SET statusId = 'S3'
           WHERE id = ? AND statusId = 'S8'
         `,
         [bookingId]
@@ -230,11 +231,14 @@ const ListBooking = async (user) => {
           s.appointmentTypeId,
           b.statusId,
           b.reason,
-          b.cancelReason,
-          b.rejectReason,
-          b.noShowNote,
-          b.statusUpdatedAt,
           b.token,
+          p.statusId AS paymentStatusId,
+          p.amount AS paymentAmount,
+          b.paymentMethodId,
+          p.paymentCode,
+          p.paidAt,
+          paymentStatus.value_vi AS paymentStatusVi,
+          paymentStatus.value_en AS paymentStatusEn,
           bq.queueNumber,
           bq.appointmentDate AS queueAppointmentDate,
 
@@ -303,6 +307,13 @@ const ListBooking = async (user) => {
       LEFT JOIN video_consultation_session vcs
           ON vcs.bookingId = b.id
 
+      LEFT JOIN appointment_payments p
+          ON p.bookingId = b.id
+
+      LEFT JOIN lookup paymentStatus
+          ON p.statusId = paymentStatus.keyMap
+         AND paymentStatus.type = 'PAYMENT_TRANSACTION_STATUS'
+
       ${scope.whereClause}
       ORDER BY b.date DESC, COALESCE(bq.queueNumber, 999999) ASC, COALESCE(TIME_TO_SEC(s.startTime), CAST(SUBSTRING(s.timeType, 2) AS UNSIGNED)) ASC
       `,
@@ -312,7 +323,7 @@ const ListBooking = async (user) => {
     return {
       errCode: 0,
       errMessage: "OK",
-      data: rows || [],
+      data: (rows || []).map((row) => ({ ...row, paymentStatus: getPublicPaymentStatus(row.paymentStatusId) })),
     };
   } catch (error) {
     console.log("ListBooking error:", error);

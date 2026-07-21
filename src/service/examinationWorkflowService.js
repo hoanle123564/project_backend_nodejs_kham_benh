@@ -13,6 +13,7 @@ const {
   assertLookupKey,
   isClosedMedicalRecordStatus,
 } = require("./workflowStatusService");
+const { PAYMENT_STATUS: ONLINE_PAYMENT_STATUS } = require("./paymentService");
 
 // Chuẩn hóa id bắt buộc và báo lỗi nếu thiếu hoặc không hợp lệ.
 const normalizePositiveId = (value, fieldName) => {
@@ -267,6 +268,14 @@ const ensureExaminationVisitForBookingInCurrentTransaction = async (data, db) =>
   }
 
   try {
+    const [onlinePayments] = await executor.query(
+      "SELECT statusId FROM appointment_payments WHERE bookingId = ? LIMIT 1 FOR UPDATE",
+      [bookingId]
+    );
+    const paymentStatusId = [ONLINE_PAYMENT_STATUS.PAID_PENDING_DOCTOR, ONLINE_PAYMENT_STATUS.COMPLETED]
+      .includes(onlinePayments[0]?.statusId)
+      ? PAYMENT_STATUS.PAID
+      : PAYMENT_STATUS.UNPAID;
     // Tạo lượt khám ở trạng thái chờ, kế thừa ngày khám và STT từ booking_queue.
     const [insertResult] = await executor.query(
       `
@@ -281,7 +290,7 @@ const ensureExaminationVisitForBookingInCurrentTransaction = async (data, db) =>
         context.examDate,
         context.queueNumber,
         VISIT_STATUS.WAITING,
-        PAYMENT_STATUS.UNPAID,
+        paymentStatusId,
       ]
     );
 
@@ -1138,7 +1147,7 @@ const markBookingCompletedForVisitInCurrentTransaction = async (context, db) => 
   await db.query(
     `
       UPDATE booking
-      SET statusId = ?, statusUpdatedAt = CURRENT_TIMESTAMP
+      SET statusId = ?
       WHERE id = ? AND statusId = ?
     `,
     [BOOKING_STATUS.COMPLETED, context.bookingId, BOOKING_STATUS.DOCTOR_CONFIRMED]

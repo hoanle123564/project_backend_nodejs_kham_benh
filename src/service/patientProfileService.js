@@ -22,6 +22,9 @@ const PATIENT_PROFILE_FIELDS = Object.freeze([
   "ethnicityId",
   "occupation",
   "healthInsuranceCode",
+  "refundBankName",
+  "refundAccountName",
+  "refundAccountNumber",
 ]);
 
 // Kiểm tra object có chứa field cần cập nhật hay không.
@@ -151,7 +154,10 @@ const getPatientProfileData = async (patientId, db) => {
         p.citizenId,
         p.ethnicityId,
         p.occupation,
-        p.healthInsuranceCode
+        p.healthInsuranceCode,
+        p.refundBankName,
+        p.refundAccountName,
+        p.refundAccountNumber
       FROM users u
       LEFT JOIN patient_profile p
         ON p.patientId = u.id

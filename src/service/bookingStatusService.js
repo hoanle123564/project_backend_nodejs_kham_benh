@@ -12,6 +12,7 @@ const {
   VIDEO_STATUS_IN_CALL,
 } = require("./videoConsultationService");
 const { dispatchReminderForBooking } = require("./appointmentReminderService");
+const { applyDoctorPaymentDecision, ensureOnlineBookingQueue } = require("./paymentService");
 
 const INACTIVE_BOOKING_STATUS_IDS = Object.freeze([
   BOOKING_STATUS.CANCELLED_BY_PATIENT,
@@ -41,15 +42,6 @@ const getAllowedStatusIds = (statusId, roleId) => {
     return [BOOKING_STATUS.CANCELLED_BY_PATIENT];
   }
   return [];
-};
-
-const getReasonColumn = (statusId) => {
-  if ([BOOKING_STATUS.CANCELLED_BY_PATIENT, BOOKING_STATUS.CANCELLED_BY_DOCTOR].includes(statusId)) {
-    return "cancelReason";
-  }
-  if (statusId === BOOKING_STATUS.REJECTED_BY_DOCTOR) return "rejectReason";
-  if (statusId === BOOKING_STATUS.PATIENT_NO_SHOW) return "noShowNote";
-  return null;
 };
 
 const canMarkPatientNoShow = (visitStatusId) =>
@@ -104,7 +96,7 @@ const updateBookingStatus = async ({ bookingId, statusId, note, actor }) => {
       const targetLookup = await assertLookupKey(LOOKUP_TYPES.BOOKING_STATUS, normalizedStatusId, db);
       const [rows] = await db.query(
         `
-          SELECT b.id, b.statusId, b.patientId, s.doctorId, s.appointmentTypeId,
+          SELECT b.id, b.statusId, b.patientId, b.date, s.doctorId, s.appointmentTypeId,
                  ev.statusId AS visitStatusId,
                  vcs.statusId AS videoSessionStatusId
           FROM booking b
@@ -151,16 +143,17 @@ const updateBookingStatus = async ({ bookingId, statusId, note, actor }) => {
         return { errCode: 3, errMessage: "Online appointment cannot be canceled after the video room has started" };
       }
 
-      const reasonColumn = getReasonColumn(normalizedStatusId);
-      const updateColumns = ["statusId = ?", "statusUpdatedAt = CURRENT_TIMESTAMP"];
-      const params = [normalizedStatusId];
-      if (reasonColumn) {
-        updateColumns.push(`${reasonColumn} = ?`);
-        params.push(normalizedNote);
-      }
-      params.push(booking.id);
-
-      await db.query(`UPDATE booking SET ${updateColumns.join(", ")} WHERE id = ?`, params);
+      await db.query("UPDATE booking SET statusId = ? WHERE id = ?", [normalizedStatusId, booking.id]);
+      const payment = await applyDoctorPaymentDecision({
+        bookingId: booking.id,
+        statusId: normalizedStatusId,
+        reason: normalizedNote,
+        actor,
+      }, db);
+      const queue = await ensureOnlineBookingQueue({
+        booking: { ...booking, statusId: normalizedStatusId },
+        payment,
+      }, db);
       if (INACTIVE_BOOKING_STATUS_IDS.includes(normalizedStatusId)) {
         await updateVideoStatusForCancelledBooking(db, booking);
       }
@@ -173,8 +166,8 @@ const updateBookingStatus = async ({ bookingId, statusId, note, actor }) => {
           statusId: normalizedStatusId,
           statusVi: targetLookup.value_vi,
           statusEn: targetLookup.value_en,
-          reasonColumn,
           note: normalizedNote,
+          queueNumber: queue?.data?.queueNumber || null,
         },
       };
     });
@@ -223,10 +216,10 @@ const cancelBookingsByScheduleChangeInCurrentTransaction = async ({ bookingIds, 
   await db.query(
     `
       UPDATE booking
-      SET statusId = ?, cancelReason = ?, statusUpdatedAt = CURRENT_TIMESTAMP
+      SET statusId = ?
       WHERE id IN (${activePlaceholders})
     `,
-    [BOOKING_STATUS.CANCELLED_BY_DOCTOR, normalizedNote, ...activeIds]
+    [BOOKING_STATUS.CANCELLED_BY_DOCTOR, ...activeIds]
   );
 
   await db.query(

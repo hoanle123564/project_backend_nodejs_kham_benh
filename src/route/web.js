@@ -179,6 +179,12 @@ const {
   handleUpdatePostOrder,
 } = require("../controller/postController");
 const router = express.Router();
+const {
+  postOnlinePayment,
+  getPayment,
+  getAdminRefunds,
+  postConfirmRefund,
+} = require("../controller/paymentController");
 const optionalAuthMiddleware = (req, res, next) =>
   req.headers.authorization ? authMiddleware(req, res, next) : next();
 
@@ -195,6 +201,8 @@ router.get("/api/admin/dashboard-statistics", authMiddleware, adminMiddleware, g
 router.get("/api/admin/medical-records", authMiddleware, adminMiddleware, getAdminMedicalRecordsApi);
 router.get("/api/admin/bookings", authMiddleware, adminMiddleware, getAdminBookings);
 router.patch("/api/admin/bookings/:bookingId/status", authMiddleware, adminMiddleware, patchAdminBookingStatus);
+router.get("/api/admin/refunds", authMiddleware, adminMiddleware, getAdminRefunds);
+router.post("/api/admin/refunds/:refundId/confirm", authMiddleware, adminMiddleware, postConfirmRefund);
 router.get("/api/admin/reviews", authMiddleware, adminMiddleware, getAdminReviewList);
 router.patch("/api/admin/reviews/:reviewId/visibility", authMiddleware, adminMiddleware, patchAdminReviewVisibility);
 
@@ -248,6 +256,7 @@ router.put("/api/change-status-doctor-info", authMiddleware, adminMiddleware, ha
 
 // patient routes
 router.post("/api/patient-book-appointment", authMiddleware, postBookAppointment);
+router.get("/api/bookings/:bookingId/payment", authMiddleware, getPayment);
 router.post("/api/verify-book-appointment", postVerifyBookAppointment);
 router.get("/api/all-patien", getAllPatient);
 router.get("/api/patient/profile", authMiddleware, getPatientProfileAPI);

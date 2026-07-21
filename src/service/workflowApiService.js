@@ -446,7 +446,6 @@ const getDoctorQueue = async (query) => {
     const search = normalizeOptionalString(query?.search);
     const params = [
       VISIT_STATUS.WAITING,
-      PAYMENT_STATUS.UNPAID,
       doctorId,
       appointmentDate,
       ...ACTIVE_QUEUE_BOOKING_STATUSES,
@@ -464,8 +463,8 @@ const getDoctorQueue = async (query) => {
     }
 
     if (paymentStatusId) {
-      filters.push("COALESCE(ev.paymentStatusId, ?) = ?");
-      params.push(PAYMENT_STATUS.UNPAID, paymentStatusId);
+      filters.push("CASE WHEN onlinePayment.statusId IN ('PPS2', 'PPS3') THEN 'PS2' ELSE COALESCE(ev.paymentStatusId, 'PS1') END = ?");
+      params.push(paymentStatusId);
     }
 
     if (search) {
@@ -495,7 +494,7 @@ const getDoctorQueue = async (query) => {
           bq.id AS bookingQueueId,
           ev.id AS examinationVisitId,
           COALESCE(ev.statusId, ?) AS visitStatusId,
-          COALESCE(ev.paymentStatusId, ?) AS paymentStatusId,
+          CASE WHEN onlinePayment.statusId IN ('PPS2', 'PPS3') THEN 'PS2' ELSE COALESCE(ev.paymentStatusId, 'PS1') END AS paymentStatusId,
           ev.startedAt,
           ev.completedAt,
           mr.id AS medicalRecordId,
@@ -531,6 +530,8 @@ const getDoctorQueue = async (query) => {
           ON lat.keyMap = s.appointmentTypeId AND lat.type = 'APPOINTMENT_TYPE'
         LEFT JOIN examination_visit ev
           ON ev.bookingId = b.id
+        LEFT JOIN appointment_payments onlinePayment
+          ON onlinePayment.bookingId = b.id
         LEFT JOIN medical_record mr
           ON mr.bookingId = b.id
         LEFT JOIN video_consultation_session vcs
@@ -538,7 +539,8 @@ const getDoctorQueue = async (query) => {
         LEFT JOIN lookup lvs
           ON lvs.keyMap = COALESCE(ev.statusId, 'VS1') AND lvs.type = 'VISIT_STATUS'
         LEFT JOIN lookup lps
-          ON lps.keyMap = COALESCE(ev.paymentStatusId, 'PS1') AND lps.type = 'PAYMENT_STATUS'
+          ON lps.keyMap = CASE WHEN onlinePayment.statusId IN ('PPS2', 'PPS3') THEN 'PS2' ELSE COALESCE(ev.paymentStatusId, 'PS1') END
+         AND lps.type = 'PAYMENT_STATUS'
         WHERE s.doctorId = ?
           AND b.date = ?
           AND b.statusId IN (?, ?, ?)
@@ -583,7 +585,7 @@ const getDoctorAppointmentDetail = async (query) => {
           bq.id AS bookingQueueId,
           ev.id AS examinationVisitId,
           COALESCE(ev.statusId, ?) AS visitStatusId,
-          COALESCE(ev.paymentStatusId, ?) AS paymentStatusId,
+          CASE WHEN onlinePayment.statusId IN ('PPS2', 'PPS3') THEN 'PS2' ELSE COALESCE(ev.paymentStatusId, 'PS1') END AS paymentStatusId,
           ev.paymentMethodId,
           ev.startedAt,
           ev.completedAt,
@@ -627,6 +629,8 @@ const getDoctorAppointmentDetail = async (query) => {
           ON lat.keyMap = s.appointmentTypeId AND lat.type = 'APPOINTMENT_TYPE'
         LEFT JOIN examination_visit ev
           ON ev.bookingId = b.id
+        LEFT JOIN appointment_payments onlinePayment
+          ON onlinePayment.bookingId = b.id
         LEFT JOIN medical_record mr
           ON mr.bookingId = b.id
         LEFT JOIN video_consultation_session vcs
@@ -634,7 +638,8 @@ const getDoctorAppointmentDetail = async (query) => {
         LEFT JOIN lookup lvs
           ON lvs.keyMap = COALESCE(ev.statusId, 'VS1') AND lvs.type = 'VISIT_STATUS'
         LEFT JOIN lookup lps
-          ON lps.keyMap = COALESCE(ev.paymentStatusId, 'PS1') AND lps.type = 'PAYMENT_STATUS'
+          ON lps.keyMap = CASE WHEN onlinePayment.statusId IN ('PPS2', 'PPS3') THEN 'PS2' ELSE COALESCE(ev.paymentStatusId, 'PS1') END
+         AND lps.type = 'PAYMENT_STATUS'
         LEFT JOIN lookup lpm
           ON lpm.keyMap = ev.paymentMethodId AND lpm.type = 'PAYMENT'
         WHERE b.id = ?
@@ -643,7 +648,6 @@ const getDoctorAppointmentDetail = async (query) => {
       `,
       [
         VISIT_STATUS.WAITING,
-        PAYMENT_STATUS.UNPAID,
         bookingId,
         ...ACTIVE_QUEUE_BOOKING_STATUSES,
       ]

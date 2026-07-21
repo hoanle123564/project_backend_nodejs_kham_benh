@@ -13,15 +13,12 @@ const {
   getCapacityExcludedStatusIds,
   updateBookingStatus,
 } = require("./bookingStatusService");
-const {
-  isDateInBookingWindow,
-  isScheduleStarted,
-  normalizeDate,
-} = require("./doctor/doctorSchedulePolicy");
+const { isScheduleStarted, normalizeDate } = require("./doctor/doctorSchedulePolicy");
 const {
   canPatientJoinVideoBooking,
 } = require("./videoConsultationService");
 const { getReviewEligibilityFromBooking } = require("./doctorReviewService");
+const { createOnlineBookingPayment, getPublicPaymentStatus } = require("./paymentService");
 
 const CAPACITY_EXCLUDED_STATUS_IDS = getCapacityExcludedStatusIds();
 const activeStatusPlaceholders = () => CAPACITY_EXCLUDED_STATUS_IDS.map(() => "?").join(", ");
@@ -45,8 +42,6 @@ const getScheduleMeta = async (scheduleId) => {
         s.appointmentTypeId,
         COALESCE(s.capacity, 1) AS capacity,
         COALESCE(s.isActive, 1) AS isActive,
-        COALESCE(s.minBookingNoticeDays, 0) AS minBookingNoticeDays,
-        COALESCE(s.maxBookingAheadDays, 30) AS maxBookingAheadDays,
         u.firstName,
         u.lastName
       FROM schedule s
@@ -75,10 +70,7 @@ const getScheduleAvailabilityInCurrentTransaction = async (scheduleId, db) => {
         appointmentTypeId,
         COALESCE(capacity, 1) AS capacity,
         COALESCE(isActive, 1) AS isActive,
-        COALESCE(minBookingNoticeDays, 0) AS minBookingNoticeDays,
-        COALESCE(maxBookingAheadDays, 30) AS maxBookingAheadDays,
-        price,
-        discountPercent
+        price
       FROM schedule
       WHERE id = ?
       LIMIT 1
@@ -143,6 +135,10 @@ const bookAppointment = async (data, authenticatedPatientId) => {
     const reason = normalizeOptionalReason(data.reason);
 
     const scheduleMeta = await getScheduleMeta(scheduleId);
+    if (scheduleMeta?.appointmentTypeId === "AT2") {
+      return createOnlineBookingPayment({ scheduleId, reason, patientId: authenticatedPatientId });
+    }
+
     if (!scheduleMeta) {
       return {
         errCode: 3,
@@ -172,20 +168,6 @@ const bookAppointment = async (data, authenticatedPatientId) => {
         return { scheduleStarted: true };
       }
 
-      if (
-        !isDateInBookingWindow(
-          availability.date,
-          availability.minBookingNoticeDays,
-          availability.maxBookingAheadDays
-        )
-      ) {
-        return { outsideBookingWindow: true };
-      }
-
-      if (availability.appointmentTypeId === "AT2") {
-        return { onlinePaymentUnavailable: true };
-      }
-
       const patient = await getBookingPatient(authenticatedPatientId, db);
       if (!patient) {
         return { missingPatient: true };
@@ -209,12 +191,7 @@ const bookAppointment = async (data, authenticatedPatientId) => {
 
       // Tạo booking ở trạng thái chờ xác nhận, sau đó cấp STT để bệnh nhân thấy số thứ tự.
       const bookingDate = normalizeDate(availability.date);
-      const priceAtBooking = await getSchedulePriceAtBooking(
-        scheduleId,
-        availability.doctorId,
-        availability.appointmentTypeId,
-        db
-      );
+      const priceAtBooking = await getSchedulePriceAtBooking(scheduleId, db);
 
       if (!isValidBookingPrice(priceAtBooking)) {
         return { invalidPrice: true };
@@ -223,8 +200,8 @@ const bookAppointment = async (data, authenticatedPatientId) => {
       const [booking] = await db.query(
         `
           INSERT INTO booking
-            (statusId, scheduleId, patientId, date, reason, token, priceAtBooking, statusUpdatedAt)
-          VALUES ('S1', ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            (statusId, scheduleId, patientId, date, reason, token, priceAtBooking)
+          VALUES ('S1', ?, ?, ?, ?, ?, ?)
         `,
         [
           scheduleId,
@@ -279,20 +256,6 @@ const bookAppointment = async (data, authenticatedPatientId) => {
       return {
         errCode: 4,
         errMessage: "Selected schedule has already started.",
-      };
-    }
-
-    if (bookingResult.outsideBookingWindow) {
-      return {
-        errCode: 4,
-        errMessage: "Selected schedule is outside the booking window.",
-      };
-    }
-
-    if (bookingResult.onlinePaymentUnavailable) {
-      return {
-        errCode: 6,
-        errMessage: "Online payment is not configured.",
       };
     }
 
@@ -397,7 +360,7 @@ const verifyBookAppointment = async (data) => {
         await db.query(
           `
             UPDATE booking
-            SET statusId = 'S2', statusUpdatedAt = CURRENT_TIMESTAMP
+            SET statusId = 'S2'
             WHERE id = ? AND statusId = 'S1'
           `,
           [booking.id]
@@ -481,10 +444,13 @@ const ListBookingForPatient = async (patientId) => {
           s.appointmentTypeId,
           s.doctorId,
           b.statusId,
-          b.cancelReason,
-          b.rejectReason,
-          b.noShowNote,
-          b.statusUpdatedAt,
+          p.statusId AS paymentStatusId,
+          p.amount AS paymentAmount,
+          b.paymentMethodId,
+          p.paymentCode,
+          p.paidAt,
+          paymentStatus.value_vi AS paymentStatusVi,
+          paymentStatus.value_en AS paymentStatusEn,
           bq.queueNumber,
           bq.appointmentDate AS queueAppointmentDate,
           ls.value_en AS statusEn,
@@ -517,10 +483,7 @@ const ListBookingForPatient = async (patientId) => {
           vcs.endedAt AS videoEndedAt,
           ar.remindAt,
           ar.emailSentAt,
-          ar.smsSentAt,
-          ar.inAppNotifiedAt,
-          ar.smsSkippedAt,
-          ar.lastError AS reminderLastError
+          ar.smsSentAt
         FROM booking b
         INNER JOIN schedule s
           ON b.scheduleId = s.id
@@ -544,6 +507,11 @@ const ListBookingForPatient = async (patientId) => {
           ON vcs.bookingId = b.id
         LEFT JOIN appointment_reminders ar
           ON ar.bookingId = b.id
+        LEFT JOIN appointment_payments p
+          ON p.bookingId = b.id
+        LEFT JOIN lookup paymentStatus
+          ON p.statusId = paymentStatus.keyMap
+         AND paymentStatus.type = 'PAYMENT_TRANSACTION_STATUS'
         LEFT JOIN lookup ls
           ON b.statusId = ls.keyMap
          AND ls.type = 'STATUS'
@@ -565,6 +533,7 @@ const ListBookingForPatient = async (patientId) => {
       const reviewEligibility = getReviewEligibilityFromBooking(row);
       return {
         ...row,
+        paymentStatus: getPublicPaymentStatus(row.paymentStatusId),
         reviewEligibility,
         canReviewDoctor: reviewEligibility.eligible,
         reviewedDoctor: reviewEligibility.reviewed,
@@ -587,7 +556,7 @@ const cancelBookAppointment = async (data) => {
   return updateBookingStatus({
     bookingId: data?.BookingId,
     statusId: "S4",
-    note: data?.cancelReason,
+    note: null,
     actor: { id: data?.patientId, roleId: "R3" },
   });
 };

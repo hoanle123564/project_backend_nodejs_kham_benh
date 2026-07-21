@@ -5,6 +5,8 @@ const ViewEngine = require('../src/config/viewEngine')
 const initWebRoute = require('../src/route/web')
 const { initChatSocket } = require('../src/socket/chatSocket')
 const { startAppointmentReminderScheduler } = require('../src/service/appointmentReminderService')
+const { startPaymentExpiryScheduler, validatePaymentConfig } = require('../src/service/paymentService')
+const { postSePayWebhook } = require('../src/controller/paymentController')
 const cors = require('cors')
 require('dotenv').config()
 
@@ -47,6 +49,7 @@ app.use(cors({
 }));
 
 
+app.post('/api/webhooks/sepay', express.raw({ type: 'application/json', limit: '1mb' }), postSePayWebhook)
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ limit: "10mb", extended: true }));
 
@@ -73,6 +76,8 @@ initChatSocket(server, {
 })
 
 server.listen(port, () => {
+    validatePaymentConfig()
     console.log('Backend nodejs is running on port: ' + port);
     startAppointmentReminderScheduler()
+    startPaymentExpiryScheduler()
 })

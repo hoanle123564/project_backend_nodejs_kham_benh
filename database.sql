@@ -76,7 +76,6 @@ CREATE TABLE IF NOT EXISTS `clinic` (
   `name` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
   `slug` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
   `address` varchar(500) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `clinicTypeId` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'CT1=Clinic, CT2=Hospital',
   `managerUserId` int DEFAULT NULL COMMENT 'FK to users.id, usually role R4',
   `provinceCode` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'Clinic work province, lookup.keyMap type=PROVINCE',
   `districtCode` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'Clinic district, lookup.keyMap type=DISTRICT',
@@ -92,7 +91,6 @@ CREATE TABLE IF NOT EXISTS `clinic` (
   KEY `idx_name` (`name`),
   KEY `idx_clinic_isActive` (`isActive`),
   KEY `idx_clinic_displayOrder` (`displayOrder`),
-  KEY `idx_clinic_type` (`clinicTypeId`),
   KEY `idx_clinic_manager` (`managerUserId`),
   KEY `idx_clinic_location` (`provinceCode`, `districtCode`, `wardCode`),
   CONSTRAINT `fk_clinic_manager` FOREIGN KEY (`managerUserId`) REFERENCES `users` (`id`) ON DELETE SET NULL ON UPDATE CASCADE
@@ -119,7 +117,6 @@ CREATE TABLE IF NOT EXISTS `clinic_department` (
   `id` int NOT NULL AUTO_INCREMENT,
   `clinicId` int NOT NULL,
   `specialtyId` int NOT NULL,
-  `description` text COLLATE utf8mb4_unicode_ci,
   `isActive` tinyint(1) DEFAULT '1',
   `createdAt` datetime NULL DEFAULT CURRENT_TIMESTAMP,
   `updatedAt` datetime NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -144,9 +141,6 @@ CREATE TABLE IF NOT EXISTS `doctor_info` (
   `slug` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `isActive` int DEFAULT '1',
   `displayOrder` int DEFAULT '0',
-  `priceId` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'Tham chiếu lookup.keyMap với type=PRICE',
-  `onlinePriceId` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'Tham chiếu lookup.keyMap với type=PRICE cho tư vấn online',
-  `paymentId` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'Tham chiếu lookup.keyMap với type=PAYMENT',
   `specialtyId` int DEFAULT NULL COMMENT 'FK to specialty.id',
   `clinicId` int DEFAULT NULL COMMENT 'FK to clinic.id',
   `createdAt` datetime NULL DEFAULT CURRENT_TIMESTAMP,
@@ -173,14 +167,11 @@ CREATE TABLE IF NOT EXISTS `schedule` (
   `startTime` time DEFAULT NULL,
   `endTime` time DEFAULT NULL,
   `appointmentTypeId` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT 'AT1' COMMENT 'AT1=Kham tai phong kham, AT2=Kham online/video',
-  `price` int DEFAULT NULL COMMENT 'Gia kham cu the cua ca lich, null thi dung gia mac dinh cua bac si',
+  `price` int DEFAULT NULL COMMENT 'Gia kham cu the cua ca lich; slot co the dat phai co gia duong',
   `capacity` int NOT NULL DEFAULT '1',
   `isActive` tinyint(1) NOT NULL DEFAULT '1',
   `sourceType` varchar(20) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'LEGACY' COMMENT 'LEGACY, FIXED, FLEXIBLE',
   `sourceRuleId` int DEFAULT NULL,
-  `minBookingNoticeDays` int NOT NULL DEFAULT '0',
-  `maxBookingAheadDays` int NOT NULL DEFAULT '30',
-  `discountPercent` decimal(5,2) NOT NULL DEFAULT '0.00',
   `createdAt` datetime NULL DEFAULT CURRENT_TIMESTAMP,
   `updatedAt` datetime NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
@@ -208,11 +199,7 @@ CREATE TABLE IF NOT EXISTS `doctor_schedule_rule` (
   `endTime` time NOT NULL,
   `slotDurationMinutes` int DEFAULT NULL,
   `capacity` int DEFAULT NULL,
-  `minBookingNoticeDays` int NOT NULL DEFAULT '0',
-  `maxBookingAheadDays` int NOT NULL DEFAULT '30',
   `price` int DEFAULT NULL,
-  `discountPercent` decimal(5,2) NOT NULL DEFAULT '0.00',
-  `isFullDay` tinyint(1) NOT NULL DEFAULT '0',
   `isActive` tinyint(1) NOT NULL DEFAULT '1',
   `createdBy` int DEFAULT NULL,
   `createdAt` datetime NULL DEFAULT CURRENT_TIMESTAMP,
@@ -241,10 +228,6 @@ CREATE TABLE IF NOT EXISTS `booking` (
   `scheduleId` int NOT NULL,
   `date` date NOT NULL,
   `reason` text COLLATE utf8mb4_unicode_ci COMMENT 'Lý do khám',
-  `cancelReason` text COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `rejectReason` text COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `noShowNote` text COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `statusUpdatedAt` datetime DEFAULT NULL,
   `token` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'Token xác nhận email',
   `priceAtBooking` int DEFAULT '0',
   `paymentMethodId` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'Phương thức thanh toán bệnh nhân chọn lúc đặt lịch',
@@ -263,6 +246,79 @@ CREATE TABLE IF NOT EXISTS `booking` (
 ) ENGINE=InnoDB;
 
 -- =====================================================
+-- BANG 8A: APPOINTMENT_PAYMENTS (Giao dich thanh toan online)
+-- =====================================================
+CREATE TABLE IF NOT EXISTS `appointment_payments` (
+  `id` BIGINT NOT NULL AUTO_INCREMENT,
+  `bookingId` INT NOT NULL,
+  `patientId` INT NOT NULL,
+  `paymentCode` VARCHAR(80) NOT NULL,
+  `amount` DECIMAL(12,0) NOT NULL,
+  `statusId` VARCHAR(32) NOT NULL,
+  `paidAt` DATETIME DEFAULT NULL,
+  `createdAt` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updatedAt` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_appointment_payments_booking` (`bookingId`),
+  UNIQUE KEY `uq_appointment_payments_code` (`paymentCode`),
+  KEY `idx_appointment_payments_status_created` (`statusId`, `createdAt`),
+  CONSTRAINT `fk_appointment_payments_booking` FOREIGN KEY (`bookingId`) REFERENCES `booking` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE,
+  CONSTRAINT `fk_appointment_payments_patient` FOREIGN KEY (`patientId`) REFERENCES `users` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE
+) ENGINE=InnoDB;
+
+-- =====================================================
+-- BANG 8B: PAYMENT_WEBHOOK_EVENTS (Idempotency webhook nha cung cap)
+-- =====================================================
+CREATE TABLE IF NOT EXISTS `payment_webhook_events` (
+  `id` BIGINT NOT NULL AUTO_INCREMENT,
+  `provider` VARCHAR(32) NOT NULL,
+  `providerTransactionId` VARCHAR(100) NOT NULL,
+  `payloadHash` CHAR(64) NOT NULL,
+  `processingStatus` VARCHAR(32) NOT NULL,
+  `errorMessage` VARCHAR(500) DEFAULT NULL,
+  `rawPayload` JSON DEFAULT NULL,
+  `processedAt` DATETIME DEFAULT NULL,
+  `createdAt` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updatedAt` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_payment_webhook_provider_tx` (`provider`, `providerTransactionId`),
+  KEY `idx_payment_webhook_status` (`processingStatus`, `createdAt`)
+) ENGINE=InnoDB;
+
+-- =====================================================
+-- BANG 8C: PAYMENT_REFUNDS (Yeu cau hoan tien)
+-- =====================================================
+CREATE TABLE IF NOT EXISTS `payment_refunds` (
+  `id` BIGINT NOT NULL AUTO_INCREMENT,
+  `paymentId` BIGINT NOT NULL,
+  `bookingId` INT NOT NULL,
+  `amount` DECIMAL(12,0) NOT NULL,
+  `statusId` VARCHAR(32) NOT NULL,
+  `reason` TEXT DEFAULT NULL,
+  `refundMode` VARCHAR(16) NOT NULL DEFAULT 'MANUAL',
+  `providerRefundId` VARCHAR(100) DEFAULT NULL,
+  `refundTransactionId` VARCHAR(100) DEFAULT NULL,
+  `receiverAccountName` VARCHAR(120) DEFAULT NULL,
+  `receiverAccountNumber` VARCHAR(64) DEFAULT NULL,
+  `receiverBank` VARCHAR(100) DEFAULT NULL,
+  `requestedAt` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `processingAt` DATETIME DEFAULT NULL,
+  `refundedAt` DATETIME DEFAULT NULL,
+  `failedAt` DATETIME DEFAULT NULL,
+  `processedBy` INT DEFAULT NULL,
+  `failureReason` VARCHAR(500) DEFAULT NULL,
+  `createdAt` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updatedAt` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_payment_refunds_payment` (`paymentId`),
+  UNIQUE KEY `uq_payment_refunds_transaction` (`refundTransactionId`),
+  KEY `idx_payment_refunds_status` (`statusId`, `requestedAt`),
+  CONSTRAINT `fk_payment_refunds_payment` FOREIGN KEY (`paymentId`) REFERENCES `appointment_payments` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE,
+  CONSTRAINT `fk_payment_refunds_booking` FOREIGN KEY (`bookingId`) REFERENCES `booking` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE,
+  CONSTRAINT `fk_payment_refunds_processor` FOREIGN KEY (`processedBy`) REFERENCES `users` (`id`) ON DELETE SET NULL ON UPDATE CASCADE
+) ENGINE=InnoDB;
+
+-- =====================================================
 -- BANG 8A: APPOINTMENT_REMINDERS (Nhac lich kham cho benh nhan)
 -- Luu trang thai gui tung kenh de scheduler/API confirm khong gui trung.
 -- =====================================================
@@ -272,15 +328,11 @@ CREATE TABLE IF NOT EXISTS `appointment_reminders` (
   `remindAt` datetime NOT NULL,
   `emailSentAt` datetime DEFAULT NULL,
   `smsSentAt` datetime DEFAULT NULL,
-  `inAppNotifiedAt` datetime DEFAULT NULL,
-  `smsSkippedAt` datetime DEFAULT NULL,
-  `processingAt` datetime DEFAULT NULL,
-  `lastError` text COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `createdAt` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updatedAt` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   UNIQUE KEY `unique_appointment_reminder_booking` (`bookingId`),
-  KEY `idx_appointment_reminders_due` (`remindAt`, `processingAt`),
+  KEY `idx_appointment_reminders_due` (`remindAt`),
   CONSTRAINT `fk_appointment_reminders_booking` FOREIGN KEY (`bookingId`) REFERENCES `booking` (`id`) ON DELETE CASCADE ON UPDATE CASCADE
 ) ENGINE=InnoDB;
 
@@ -336,7 +388,6 @@ CREATE TABLE IF NOT EXISTS `chat_sessions` (
   `lastAiResult` JSON NULL,
   `createdAt` DATETIME DEFAULT CURRENT_TIMESTAMP,
   `updatedAt` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  `expiresAt` DATETIME NULL,
   UNIQUE KEY `unique_chat_session_id` (`sessionId`),
   KEY `idx_chat_sessions_patient` (`patientId`),
   KEY `idx_chat_sessions_state` (`state`),
@@ -409,9 +460,6 @@ CREATE TABLE IF NOT EXISTS `doctor_reviews` (
   `rating` tinyint NOT NULL,
   `comment` text COLLATE utf8mb4_unicode_ci NOT NULL,
   `statusId` varchar(20) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'RV1',
-  `hiddenReason` text COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `hiddenBy` int DEFAULT NULL,
-  `hiddenAt` datetime DEFAULT NULL,
   `createdAt` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updatedAt` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
@@ -420,12 +468,10 @@ CREATE TABLE IF NOT EXISTS `doctor_reviews` (
   KEY `idx_doctor_reviews_doctor_rating_status_created` (`doctorId`, `rating`, `statusId`, `createdAt`),
   KEY `idx_doctor_reviews_patient_created` (`patientId`, `createdAt`),
   KEY `idx_doctor_reviews_status_created` (`statusId`, `createdAt`),
-  KEY `idx_doctor_reviews_hidden_by` (`hiddenBy`),
   CONSTRAINT `chk_doctor_reviews_rating` CHECK (`rating` BETWEEN 1 AND 5),
   CONSTRAINT `fk_doctor_reviews_booking` FOREIGN KEY (`bookingId`) REFERENCES `booking` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE,
   CONSTRAINT `fk_doctor_reviews_patient` FOREIGN KEY (`patientId`) REFERENCES `users` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE,
-  CONSTRAINT `fk_doctor_reviews_doctor` FOREIGN KEY (`doctorId`) REFERENCES `users` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE,
-  CONSTRAINT `fk_doctor_reviews_hidden_by` FOREIGN KEY (`hiddenBy`) REFERENCES `users` (`id`) ON DELETE SET NULL ON UPDATE CASCADE
+  CONSTRAINT `fk_doctor_reviews_doctor` FOREIGN KEY (`doctorId`) REFERENCES `users` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE
 ) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS `doctor_review_replies` (
@@ -529,6 +575,9 @@ CREATE TABLE IF NOT EXISTS `patient_profile` (
   `ethnicityId` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'Logical reference to lookup.keyMap with type=ETHNICITY',
   `occupation` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `healthInsuranceCode` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `refundBankName` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `refundAccountName` varchar(120) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `refundAccountNumber` varchar(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `createdAt` datetime NULL DEFAULT CURRENT_TIMESTAMP,
   `updatedAt` datetime NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
@@ -824,6 +873,24 @@ INSERT IGNORE INTO `lookup` (`keyMap`, `type`, `value_vi`, `value_en`) VALUES
 INSERT IGNORE INTO `lookup` (`keyMap`, `type`, `value_vi`, `value_en`) VALUES
 ('PS1', 'PAYMENT_STATUS', 'Chưa thanh toán', 'Unpaid'),
 ('PS2', 'PAYMENT_STATUS', 'Đã thanh toán', 'Paid');
+
+-- PAYMENT_TRANSACTION_STATUS (Trạng thái giao dịch thanh toán)
+INSERT IGNORE INTO `lookup` (`keyMap`, `type`, `value_vi`, `value_en`) VALUES
+('PPS1', 'PAYMENT_TRANSACTION_STATUS', 'Chờ thanh toán', 'Pending payment'),
+('PPS2', 'PAYMENT_TRANSACTION_STATUS', 'Đã thanh toán, chờ bác sĩ xác nhận', 'Paid, pending doctor confirmation'),
+('PPS3', 'PAYMENT_TRANSACTION_STATUS', 'Hoàn thành', 'Completed'),
+('PPS4', 'PAYMENT_TRANSACTION_STATUS', 'Hết hạn', 'Expired'),
+('PPS5', 'PAYMENT_TRANSACTION_STATUS', 'Cần kiểm tra thủ công', 'Manual review'),
+('PPS6', 'PAYMENT_TRANSACTION_STATUS', 'Chờ hoàn tiền', 'Refund pending'),
+('PPS7', 'PAYMENT_TRANSACTION_STATUS', 'Đã hoàn tiền', 'Refunded'),
+('PPS8', 'PAYMENT_TRANSACTION_STATUS', 'Hoàn tiền thất bại', 'Refund failed');
+
+-- REFUND_STATUS (Trạng thái yêu cầu hoàn tiền)
+INSERT IGNORE INTO `lookup` (`keyMap`, `type`, `value_vi`, `value_en`) VALUES
+('RFS1', 'REFUND_STATUS', 'Chờ hoàn tiền', 'Refund pending'),
+('RFS2', 'REFUND_STATUS', 'Đang hoàn tiền', 'Refund processing'),
+('RFS3', 'REFUND_STATUS', 'Đã hoàn tiền', 'Refunded'),
+('RFS4', 'REFUND_STATUS', 'Hoàn tiền thất bại', 'Refund failed');
 
 -- MEDICAL_RECORD_STATUS (Trạng thái bệnh án)
 INSERT IGNORE INTO `lookup` (`keyMap`, `type`, `value_vi`, `value_en`) VALUES
