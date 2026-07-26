@@ -1,4 +1,4 @@
-const { getDoctorNotifications, markDoctorNotificationsRead } = require("../service/doctorNotificationService");
+const { getDoctorNotifications, markDoctorNotificationsRead } = require("../service/notificationService");
 
 const sendError = (res, error) => res.status(error?.statusCode || 500).json({
   errCode: error?.errCode || -1,

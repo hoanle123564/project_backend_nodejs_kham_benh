@@ -488,24 +488,33 @@ CREATE TABLE IF NOT EXISTS `doctor_review_replies` (
   CONSTRAINT `fk_doctor_review_replies_doctor` FOREIGN KEY (`doctorId`) REFERENCES `users` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE
 ) ENGINE=InnoDB;
 
-CREATE TABLE IF NOT EXISTS `doctor_notifications` (
-  `id` INT AUTO_INCREMENT PRIMARY KEY,
-  `doctorId` INT NOT NULL,
+CREATE TABLE IF NOT EXISTS `notifications` (
+  `id` INT NOT NULL AUTO_INCREMENT,
+  `recipientUserId` INT NOT NULL,
+  `recipientRole` VARCHAR(10) NOT NULL COMMENT 'R2 doctor, R3 patient',
   `bookingId` INT NOT NULL,
   `chatRoomId` INT DEFAULT NULL,
   `reviewId` INT DEFAULT NULL,
   `sourceMessageId` INT DEFAULT NULL,
-  `type` VARCHAR(30) NOT NULL COMMENT 'NEW_BOOKING, NEW_MESSAGE, NEW_REVIEW',
+  `reminderId` INT DEFAULT NULL,
+  `bookingStatusId` VARCHAR(10) DEFAULT NULL,
+  `type` VARCHAR(40) NOT NULL,
   `content` VARCHAR(500) DEFAULT NULL,
   `isRead` TINYINT(1) NOT NULL DEFAULT 0,
   `readAt` DATETIME DEFAULT NULL,
   `createdAt` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  UNIQUE KEY `unique_doctor_notification_message` (`sourceMessageId`),
-  UNIQUE KEY `unique_doctor_notification_review` (`reviewId`, `type`),
-  KEY `idx_doctor_notification_feed` (`doctorId`, `isRead`, `createdAt`),
-  CONSTRAINT `fk_doctor_notification_doctor` FOREIGN KEY (`doctorId`) REFERENCES `users` (`id`) ON DELETE CASCADE ON UPDATE CASCADE,
-  CONSTRAINT `fk_doctor_notification_booking` FOREIGN KEY (`bookingId`) REFERENCES `booking` (`id`) ON DELETE CASCADE ON UPDATE CASCADE,
-  CONSTRAINT `fk_doctor_notification_review` FOREIGN KEY (`reviewId`) REFERENCES `doctor_reviews` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `unique_notification_message` (`sourceMessageId`, `recipientRole`),
+  UNIQUE KEY `unique_notification_review` (`reviewId`, `type`, `recipientRole`),
+  UNIQUE KEY `unique_notification_reminder` (`reminderId`, `type`, `recipientRole`),
+  UNIQUE KEY `unique_notification_booking_status` (`bookingId`, `bookingStatusId`, `type`, `recipientRole`),
+  KEY `idx_notification_feed` (`recipientUserId`, `recipientRole`, `isRead`, `createdAt`),
+  CONSTRAINT `fk_notification_recipient` FOREIGN KEY (`recipientUserId`) REFERENCES `users` (`id`) ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT `fk_notification_booking` FOREIGN KEY (`bookingId`) REFERENCES `booking` (`id`) ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT `fk_notification_room` FOREIGN KEY (`chatRoomId`) REFERENCES `chat_rooms` (`id`) ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT `fk_notification_review` FOREIGN KEY (`reviewId`) REFERENCES `doctor_reviews` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE,
+  CONSTRAINT `fk_notification_message` FOREIGN KEY (`sourceMessageId`) REFERENCES `chat_room_messages` (`id`) ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT `fk_notification_reminder` FOREIGN KEY (`reminderId`) REFERENCES `appointment_reminders` (`id`) ON DELETE CASCADE ON UPDATE CASCADE
 ) ENGINE=InnoDB;
 
 -- =====================================================
