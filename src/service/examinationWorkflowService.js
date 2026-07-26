@@ -14,6 +14,7 @@ const {
   isClosedMedicalRecordStatus,
 } = require("./workflowStatusService");
 const { PAYMENT_STATUS: ONLINE_PAYMENT_STATUS } = require("./paymentService");
+const { createPatientBookingStatusNotification } = require("./notificationService");
 
 // Chuẩn hóa id bắt buộc và báo lỗi nếu thiếu hoặc không hợp lệ.
 const normalizePositiveId = (value, fieldName) => {
@@ -1144,7 +1145,7 @@ const getExaminationVisitForRecord = async (medicalRecordId, db) => {
 const markBookingCompletedForVisitInCurrentTransaction = async (context, db) => {
   if (!context?.bookingId) return;
 
-  await db.query(
+  const [result] = await db.query(
     `
       UPDATE booking
       SET statusId = ?
@@ -1152,6 +1153,13 @@ const markBookingCompletedForVisitInCurrentTransaction = async (context, db) => 
     `,
     [BOOKING_STATUS.COMPLETED, context.bookingId, BOOKING_STATUS.DOCTOR_CONFIRMED]
   );
+  if (result.affectedRows) {
+    await createPatientBookingStatusNotification({
+      patientId: context.patientId,
+      bookingId: context.bookingId,
+      bookingStatusId: BOOKING_STATUS.COMPLETED,
+    }, db);
+  }
   await markVideoSessionEndedForBookingInCurrentTransaction(context.bookingId, db);
 };
 

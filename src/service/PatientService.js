@@ -7,7 +7,7 @@ const { sendSimpleEmail } = require("./emailService");
 const { ensurePriceAtBookingColumn, getSchedulePriceAtBooking } = require("./adminDashboardService");
 const { withTransaction } = require("./transactionService");
 const { assignBookingQueueNumberInCurrentTransaction } = require("./bookingQueueService");
-const { createDoctorNotification } = require("./doctorNotificationService");
+const { createDoctorNotification, createPatientBookingStatusNotification } = require("./notificationService");
 const {
   buildCapacitySummary,
   getCapacityExcludedStatusIds,
@@ -334,6 +334,7 @@ const verifyBookAppointment = async (data) => {
         `
           SELECT
             b.id,
+            b.patientId,
             b.date,
             b.statusId,
             s.doctorId
@@ -369,6 +370,11 @@ const verifyBookAppointment = async (data) => {
           doctorId: booking.doctorId,
           bookingId: booking.id,
           type: "NEW_BOOKING",
+        }, db);
+        await createPatientBookingStatusNotification({
+          patientId: booking.patientId,
+          bookingId: booking.id,
+          bookingStatusId: "S2",
         }, db);
       }
 

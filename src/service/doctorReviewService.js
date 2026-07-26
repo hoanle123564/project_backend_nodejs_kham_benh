@@ -1,6 +1,6 @@
 const connection = require("../config/data");
 const { getDb, withTransaction } = require("./transactionService");
-const { createDoctorNotification } = require("./doctorNotificationService");
+const { createDoctorNotification } = require("./notificationService");
 const {
   BOOKING_STATUS,
   LOOKUP_TYPES,
@@ -44,9 +44,9 @@ const normalizeRating = (value) => {
   return { ok: true, value: rating };
 };
 
-const normalizeLimitedText = (value, fieldName = "Content") => {
+const normalizeLimitedText = (value, fieldName = "Content", required = true) => {
   const text = String(value || "").trim();
-  if (!text) return { ok: false, errMessage: `${fieldName} is required` };
+  if (!text && required) return { ok: false, errMessage: `${fieldName} is required` };
   if (text.length > MAX_TEXT_LENGTH) {
     return {
       ok: false,
@@ -385,7 +385,7 @@ const createBookingReview = async (user, bookingIdValue, payload = {}) => {
 
   const bookingId = normalizePositiveId(bookingIdValue);
   const rating = normalizeRating(payload.rating);
-  const comment = normalizeLimitedText(payload.comment, "Comment");
+  const comment = normalizeLimitedText(payload.comment, "Comment", false);
   if (!bookingId) return fail("Missing required parameter: bookingId");
   if (!rating.ok) return fail(rating.errMessage);
   if (!comment.ok) return fail(comment.errMessage);
