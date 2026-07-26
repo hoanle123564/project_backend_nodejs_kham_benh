@@ -250,8 +250,10 @@ CREATE TABLE IF NOT EXISTS `booking` (
 -- =====================================================
 CREATE TABLE IF NOT EXISTS `appointment_payments` (
   `id` BIGINT NOT NULL AUTO_INCREMENT,
-  `bookingId` INT NOT NULL,
+  `bookingId` INT DEFAULT NULL,
+  `scheduleId` INT DEFAULT NULL,
   `patientId` INT NOT NULL,
+  `reason` TEXT DEFAULT NULL,
   `paymentCode` VARCHAR(80) NOT NULL,
   `amount` DECIMAL(12,0) NOT NULL,
   `statusId` VARCHAR(32) NOT NULL,
@@ -262,7 +264,9 @@ CREATE TABLE IF NOT EXISTS `appointment_payments` (
   UNIQUE KEY `uq_appointment_payments_booking` (`bookingId`),
   UNIQUE KEY `uq_appointment_payments_code` (`paymentCode`),
   KEY `idx_appointment_payments_status_created` (`statusId`, `createdAt`),
+  KEY `idx_appointment_payments_schedule` (`scheduleId`, `statusId`, `createdAt`),
   CONSTRAINT `fk_appointment_payments_booking` FOREIGN KEY (`bookingId`) REFERENCES `booking` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE,
+  CONSTRAINT `fk_appointment_payments_schedule` FOREIGN KEY (`scheduleId`) REFERENCES `schedule` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE,
   CONSTRAINT `fk_appointment_payments_patient` FOREIGN KEY (`patientId`) REFERENCES `users` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE
 ) ENGINE=InnoDB;
 
@@ -291,7 +295,7 @@ CREATE TABLE IF NOT EXISTS `payment_webhook_events` (
 CREATE TABLE IF NOT EXISTS `payment_refunds` (
   `id` BIGINT NOT NULL AUTO_INCREMENT,
   `paymentId` BIGINT NOT NULL,
-  `bookingId` INT NOT NULL,
+  `bookingId` INT DEFAULT NULL,
   `amount` DECIMAL(12,0) NOT NULL,
   `statusId` VARCHAR(32) NOT NULL,
   `reason` TEXT DEFAULT NULL,

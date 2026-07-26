@@ -186,6 +186,8 @@ const router = express.Router();
 const {
   postOnlinePayment,
   getPayment,
+  getPaymentIntentApi,
+  cancelPaymentIntentApi,
   getAdminRefunds,
   postConfirmRefund,
 } = require("../controller/paymentController");
@@ -261,6 +263,8 @@ router.put("/api/change-status-doctor-info", authMiddleware, adminMiddleware, ha
 // patient routes
 router.post("/api/patient-book-appointment", authMiddleware, postBookAppointment);
 router.get("/api/bookings/:bookingId/payment", authMiddleware, getPayment);
+router.get("/api/payments/:paymentId", authMiddleware, getPaymentIntentApi);
+router.post("/api/payments/:paymentId/cancel", authMiddleware, cancelPaymentIntentApi);
 router.post("/api/verify-book-appointment", postVerifyBookAppointment);
 router.get("/api/all-patien", getAllPatient);
 router.get("/api/patient/profile", authMiddleware, getPatientProfileAPI);
