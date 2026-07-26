@@ -28,6 +28,8 @@ assert.strictEqual(normalizeRating("five").ok, false);
 assert.deepStrictEqual(normalizeLimitedText("  ok  ", "Comment"), { ok: true, value: "ok" });
 assert.strictEqual(normalizeLimitedText("   ", "Comment").ok, false);
 assert.strictEqual(normalizeLimitedText("x".repeat(1001), "Comment").ok, false);
+assert.deepStrictEqual(normalizeLimitedText("   ", "Comment", false), { ok: true, value: "" });
+assert.strictEqual(normalizeLimitedText("x".repeat(1001), "Comment", false).ok, false);
 
 assert.deepStrictEqual(
   buildRatingSummary([

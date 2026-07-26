@@ -3,6 +3,8 @@ const { sendResultEmail } = require("../emailService");
 const { getBookingListScope } = require("../clinicAccessService");
 const { normalizeDate } = require("./doctorScheduleService");
 const { getPublicPaymentStatus } = require("../paymentService");
+const { withTransaction } = require("../transactionService");
+const { createPatientBookingStatusNotification } = require("../notificationService");
 
 const GetListPatientForDoctor = async (doctorId, date) => {
   const status = {};
@@ -90,7 +92,7 @@ const sendRemedy = async (data) => {
     // Cập nhật trạng thái booking
     const [bookingRows] = await connection.promise().query(
       `
-        SELECT b.id, u.firstName, u.lastName
+        SELECT b.id, b.patientId, u.firstName, u.lastName
         FROM booking b
         INNER JOIN schedule s
           ON b.scheduleId = s.id
@@ -111,14 +113,23 @@ const sendRemedy = async (data) => {
     }
 
     if (shouldUpdateBookingStatus) {
-      await connection.promise().query(
-        `
-          UPDATE booking
-          SET statusId = 'S3'
-          WHERE id = ? AND statusId = 'S8'
-        `,
-        [bookingId]
-      );
+      await withTransaction(async (db) => {
+        const [result] = await db.query(
+          `
+            UPDATE booking
+            SET statusId = 'S3'
+            WHERE id = ? AND statusId = 'S8'
+          `,
+          [bookingId]
+        );
+        if (result.affectedRows) {
+          await createPatientBookingStatusNotification({
+            patientId: bookingRows[0].patientId,
+            bookingId,
+            bookingStatusId: "S3",
+          }, db);
+        }
+      });
     }
 
     // Gửi email (giả lập)
