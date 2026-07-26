@@ -13,6 +13,7 @@ const {
 } = require("./videoConsultationService");
 const { dispatchReminderForBooking } = require("./appointmentReminderService");
 const { applyDoctorPaymentDecision, ensureOnlineBookingQueue } = require("./paymentService");
+const { createPatientBookingStatusNotification } = require("./notificationService");
 
 const INACTIVE_BOOKING_STATUS_IDS = Object.freeze([
   BOOKING_STATUS.CANCELLED_BY_PATIENT,
@@ -144,6 +145,11 @@ const updateBookingStatus = async ({ bookingId, statusId, note, actor }) => {
       }
 
       await db.query("UPDATE booking SET statusId = ? WHERE id = ?", [normalizedStatusId, booking.id]);
+      await createPatientBookingStatusNotification({
+        patientId: booking.patientId,
+        bookingId: booking.id,
+        bookingStatusId: normalizedStatusId,
+      }, db);
       const payment = await applyDoctorPaymentDecision({
         bookingId: booking.id,
         statusId: normalizedStatusId,
@@ -198,7 +204,7 @@ const cancelBookingsByScheduleChangeInCurrentTransaction = async ({ bookingIds, 
   const inactivePlaceholders = CAPACITY_EXCLUDED_BOOKING_STATUS_IDS.map(() => "?").join(", ");
   const [rows] = await db.query(
     `
-      SELECT b.id, s.appointmentTypeId
+      SELECT b.id, b.patientId, s.appointmentTypeId
       FROM booking b
       INNER JOIN schedule s ON s.id = b.scheduleId
       WHERE b.id IN (${placeholders})
@@ -221,6 +227,13 @@ const cancelBookingsByScheduleChangeInCurrentTransaction = async ({ bookingIds, 
     `,
     [BOOKING_STATUS.CANCELLED_BY_DOCTOR, ...activeIds]
   );
+  for (const booking of rows) {
+    await createPatientBookingStatusNotification({
+      patientId: booking.patientId,
+      bookingId: booking.id,
+      bookingStatusId: BOOKING_STATUS.CANCELLED_BY_DOCTOR,
+    }, db);
+  }
 
   await db.query(
     `

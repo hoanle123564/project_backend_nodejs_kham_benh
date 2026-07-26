@@ -3,6 +3,7 @@ const { normalizeDate, normalizeTime } = require("./doctor/doctorSchedulePolicy"
 const { sendAppointmentReminderEmail } = require("./emailService");
 const { sendAppointmentReminderSms } = require("./smsService");
 const { BOOKING_STATUS } = require("./workflowStatusService");
+const { createPatientNotification, NOTIFICATION_TYPE } = require("./notificationService");
 
 const REMINDER_MINUTES_BEFORE = 30;
 const DEFAULT_LIMIT = 20;
@@ -112,7 +113,7 @@ const getDueReminders = async ({ bookingId = null, limit = DEFAULT_LIMIT } = {})
   const [rows] = await connection.promise().query(
     `
       SELECT ar.id, ar.bookingId, ar.remindAt, ar.emailSentAt, ar.smsSentAt,
-             b.date, b.reason, b.statusId,
+             b.patientId, b.date, b.reason, b.statusId,
              s.startTime, s.endTime, s.timeType,
              ${APPOINTMENT_START_SQL} AS appointmentStartAt,
              patient.email AS patientEmail,
@@ -150,7 +151,7 @@ const getReminderDetails = async (reminderId) => {
   const [rows] = await connection.promise().query(
     `
       SELECT ar.id, ar.bookingId, ar.remindAt, ar.emailSentAt, ar.smsSentAt,
-             b.date, b.reason, b.statusId,
+             b.patientId, b.date, b.reason, b.statusId,
              s.startTime, s.endTime, s.timeType,
              patient.email AS patientEmail,
              patient.phoneNumber AS patientPhoneNumber,
@@ -250,6 +251,13 @@ const processReminder = async (reminder) => {
 
     const errors = [];
     const payload = buildReminderPayload(freshReminder);
+
+    await createPatientNotification({
+      patientId: freshReminder.patientId,
+      bookingId: freshReminder.bookingId,
+      reminderId: freshReminder.id,
+      type: NOTIFICATION_TYPE.APPOINTMENT_REMINDER,
+    });
 
     if (!freshReminder.emailSentAt) {
       try {

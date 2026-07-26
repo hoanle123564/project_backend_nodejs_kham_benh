@@ -108,6 +108,10 @@ const {
   markMyDoctorNotificationsRead,
 } = require("../controller/doctorNotificationController");
 const {
+  getMyPatientNotifications,
+  markMyPatientNotificationsRead,
+} = require("../controller/patientNotificationController");
+const {
   getAdminReviewList,
   getBookingReviewEligibilityApi,
   getMyDoctorReviews,
@@ -261,6 +265,9 @@ router.post("/api/verify-book-appointment", postVerifyBookAppointment);
 router.get("/api/all-patien", getAllPatient);
 router.get("/api/patient/profile", authMiddleware, getPatientProfileAPI);
 router.put("/api/patient/profile", authMiddleware, updatePatientProfileAPI);
+router.get("/api/patient/notifications", authMiddleware, getMyPatientNotifications);
+router.patch("/api/patient/notifications/read", authMiddleware, markMyPatientNotificationsRead);
+router.patch("/api/patient/notifications/:notificationId/read", authMiddleware, markMyPatientNotificationsRead);
 router.get("/api/get-list-booking-appointment-patient", authMiddleware, getListBookingForPatient);
 router.post("/api/cancel-book-appointment", authMiddleware, postCancelBookAppointment);
 router.get("/api/bookings/:bookingId/review-eligibility", authMiddleware, getBookingReviewEligibilityApi);

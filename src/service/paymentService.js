@@ -2,7 +2,7 @@ const crypto = require("crypto");
 const connection = require("../config/data");
 const { withTransaction } = require("./transactionService");
 const { getSchedulePriceAtBooking } = require("./adminDashboardService");
-const { createDoctorNotification } = require("./doctorNotificationService");
+const { createDoctorNotification, createPatientBookingStatusNotification } = require("./notificationService");
 const { isScheduleStarted, normalizeDate } = require("./doctor/doctorSchedulePolicy");
 const { assignBookingQueueNumberInCurrentTransaction } = require("./bookingQueueService");
 
@@ -227,7 +227,7 @@ const processSePayWebhook = async ({ payload, rawBody }) => {
         return { matched: false, reason: "PAYMENT_NOT_FOUND", paymentCode };
       }
       const [bookings] = await db.query(
-        `SELECT b.id, b.statusId, b.date, s.doctorId, s.appointmentTypeId
+        `SELECT b.id, b.patientId, b.statusId, b.date, s.doctorId, s.appointmentTypeId
            FROM booking b INNER JOIN schedule s ON s.id = b.scheduleId
           WHERE b.id = ? LIMIT 1 FOR UPDATE`,
         [paymentReference.bookingId]
@@ -270,6 +270,13 @@ const processSePayWebhook = async ({ payload, rawBody }) => {
         [paymentStatusId, payment.id]
       );
       await db.query("UPDATE booking SET statusId = 'S2' WHERE id = ? AND statusId = 'S1'", [payment.bookingId]);
+      if (booking.statusId === "S1") {
+        await createPatientBookingStatusNotification({
+          patientId: booking.patientId,
+          bookingId: payment.bookingId,
+          bookingStatusId: "S2",
+        }, db);
+      }
       await db.query("UPDATE examination_visit SET paymentStatusId = 'PS2' WHERE bookingId = ?", [payment.bookingId]);
       const updatedBooking = { ...booking, statusId: booking.statusId === "S1" ? "S2" : booking.statusId };
       const updatedPayment = { ...payment, statusId: paymentStatusId };

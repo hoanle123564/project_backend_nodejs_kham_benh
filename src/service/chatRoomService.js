@@ -1,6 +1,6 @@
 const connection = require("../config/data");
 const { getDb, withTransaction } = require("./transactionService");
-const { createDoctorNotification } = require("./doctorNotificationService");
+const { createDoctorNotification, createPatientNotification, NOTIFICATION_TYPE } = require("./notificationService");
 
 const ROLE_DOCTOR = "R2";
 const ROLE_PATIENT = "R3";
@@ -440,6 +440,14 @@ const createRoomMessage = async ({ roomId, body, user }) => {
         sourceMessageId: createdMessage.id,
         type: "NEW_MESSAGE",
         content: createdMessage.message,
+      }, db);
+    } else {
+      await createPatientNotification({
+        patientId: room.patientId,
+        bookingId: room.bookingId,
+        chatRoomId: room.roomId,
+        sourceMessageId: createdMessage.id,
+        type: NOTIFICATION_TYPE.NEW_MESSAGE,
       }, db);
     }
 
