@@ -40,10 +40,12 @@ CREATE TABLE IF NOT EXISTS `users` (
     `phoneNumber` VARCHAR(20) DEFAULT NULL,
     `positionId` VARCHAR(10) DEFAULT NULL COMMENT 'Tham chiếu lookup.keyMap với type=POSITION',
     `image` LONGTEXT DEFAULT NULL,
+    `isActive` TINYINT(1) NOT NULL DEFAULT 1,
     `createdAt` DATETIME DEFAULT CURRENT_TIMESTAMP,
     `updatedAt` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     UNIQUE KEY `unique_email` (`email`),
     INDEX `idx_roleId` (`roleId`),
+    INDEX `idx_users_isActive` (`isActive`),
     INDEX `idx_email` (`email`),
     INDEX `idx_users_location` (`provinceCode`, `districtCode`, `wardCode`)
 ) ENGINE=InnoDB;

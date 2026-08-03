@@ -11,7 +11,7 @@ const {
   handleCreateNewUserAPI,
   handleEditUserAPI,
   handleChangePasswordAPI,
-  handleDeleteNewUserAPI,
+  handleDisableUserAPI,
   getLookUp,
 } = require("../controller/userController");
 
@@ -199,7 +199,7 @@ router.get("/api/get-all-user", handleGetAllUser);
 router.post("/api/create-new-user", handleCreateNewUserAPI);
 router.put("/api/edit-user", authMiddleware, handleEditUserAPI);
 router.put("/api/change-password", authMiddleware, handleChangePasswordAPI);
-router.delete("/api/delete-user", authMiddleware, handleDeleteNewUserAPI);
+router.delete("/api/delete-user", authMiddleware, adminMiddleware, handleDisableUserAPI);
 router.get("/api/lookup", getLookUp);
 
 // admin routes

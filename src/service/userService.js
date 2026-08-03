@@ -44,6 +44,16 @@ const handleUserLoginService = async (data) => {
         }
 
         const user = rows[0];
+        if (Number(user.isActive) !== 1) {
+            return {
+                errCode: 4,
+                errMessage: "Account is disabled",
+                user: null,
+                token: null,
+                data: {}
+            };
+        }
+
         const checkPass = await bcrypt.compare(password, user.password || "");
         if (!checkPass) {
             return {
@@ -308,111 +318,41 @@ const changePasswordService = async (userId, data) => {
 };
 
 
-// DELETE USER
-const deleteUserService = async (id) => {
+// DISABLE USER
+const disableUserService = async (id, isActive) => {
     try {
-        if (!id) {
+        const userId = Number(id);
+        if (!Number.isInteger(userId) || userId <= 0) {
             return { errCode: 1, errMessage: "Missing required parameter" };
+        }
+        const nextIsActive = Number(isActive);
+        if (![0, 1].includes(nextIsActive)) {
+            return { errCode: 3, errMessage: "isActive must be 0 or 1" };
         }
 
         const [check] = await connection.promise().query(
-            `SELECT id, roleId FROM users WHERE id = ?`,
-            [id]
+            `SELECT id FROM users WHERE id = ?`,
+            [userId]
         );
 
         if (check.length === 0) {
             return { errCode: 2, errMessage: "User does not exist" };
         }
 
-        const user = check[0];
-
-        // Kiểm tra nếu là bác sĩ (R2)
-        if (user.roleId === 'R2') {
-            // Kiểm tra lịch làm việc
-            const [schedules] = await connection.promise().query(
-                `SELECT id FROM schedule WHERE doctorId = ? LIMIT 1`,
-                [id]
-            );
-
-            if (schedules.length > 0) {
-                return {
-                    errCode: 3,
-                    errMessage: "Cannot delete doctor with existing schedules"
-                };
-            }
-
-            // Kiểm tra lịch khám bệnh đang hoạt động (không bao gồm S3 - Đã khám và S4 - Đã hủy)
-            const [activeBookings] = await connection.promise().query(
-                `SELECT b.id
-                 FROM booking b
-                 INNER JOIN schedule s ON b.scheduleId = s.id
-                 WHERE s.doctorId = ?
-                 AND b.statusId NOT IN ('S3', 'S4', 'S5', 'S6', 'S7')
-                 LIMIT 1`,
-                [id]
-            );
-
-            if (activeBookings.length > 0) {
-                return {
-                    errCode: 4,
-                    errMessage: "Cannot delete doctor with active bookings. Only completed (S3) or cancelled (S4) bookings are allowed."
-                };
-            }
-
-            // Xóa tất cả booking đã hoàn thành hoặc đã hủy của bác sĩ
-            await connection.promise().query(
-                `DELETE b
-                 FROM booking b
-                 INNER JOIN schedule s ON b.scheduleId = s.id
-                 WHERE s.doctorId = ?
-                 AND b.statusId IN ('S3', 'S4')`,
-                [id]
-            );
-
-            // Xóa thông tin bác sĩ (doctor_info)
-            await connection.promise().query(
-                `DELETE FROM doctor_info WHERE doctorId = ?`,
-                [id]
-            );
-        }
-
-        // Kiểm tra nếu là bệnh nhân (R3)
-        if (user.roleId === 'R3') {
-            // Kiểm tra lịch khám đang hoạt động
-            const [activeBookings] = await connection.promise().query(
-                `SELECT id FROM booking 
-                 WHERE patientId = ? 
-                 AND statusId NOT IN ('S3', 'S4', 'S5', 'S6', 'S7')
-                 LIMIT 1`,
-                [id]
-            );
-
-            if (activeBookings.length > 0) {
-                return {
-                    errCode: 5,
-                    errMessage: "Cannot delete patient with active bookings. Only completed (S3) or cancelled (S4) bookings are allowed."
-                };
-            }
-
-            // Xóa tất cả booking đã hoàn thành hoặc đã hủy của bệnh nhân
-            await connection.promise().query(
-                `DELETE FROM booking 
-                 WHERE patientId = ? 
-                 AND statusId IN ('S3', 'S4')`,
-                [id]
-            );
-        }
-
-        // Xóa user
         await connection.promise().query(
-            `DELETE FROM users WHERE id = ?`,
-            [id]
+            `UPDATE users SET isActive = ? WHERE id = ?`,
+            [nextIsActive, userId]
         );
 
-        return { errCode: 0, errMessage: "User and related data deleted successfully" };
+        return {
+            errCode: 0,
+            errMessage: nextIsActive === 1
+                ? "User account enabled successfully"
+                : "User account disabled successfully"
+        };
 
     } catch (error) {
-        console.log("deleteUserService error:", error);
+        console.log("disableUserService error:", error);
         return { errCode: -1, errMessage: "Error from server" };
     }
 };
@@ -531,7 +471,7 @@ module.exports = {
     getAllUsersService,
     createNewUserService,
     changePasswordService,
-    deleteUserService,
+    disableUserService,
     updateUserService,
     getLookUpService
 };

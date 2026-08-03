@@ -3,7 +3,7 @@ const {
     getAllUsersService,
     createNewUserService,
     changePasswordService,
-    deleteUserService,
+    disableUserService,
     updateUserService,
     getLookUpService
 } = require('../service/userService');
@@ -58,7 +58,9 @@ const handleCreateNewUserAPI = async (req, res) => {
 // EDIT USER
 const handleEditUserAPI = async (req, res) => {
     try {
-        const options = req.user?.roleId === "R2" ? { selfUserId: req.user.id } : undefined;
+        const options = ["R2", "R4"].includes(req.user?.roleId)
+            ? { selfUserId: req.user.id }
+            : undefined;
         const response = await updateUserService(req.body, options);
         return res.status(200).json(response);
     } catch (error) {
@@ -85,13 +87,13 @@ const handleChangePasswordAPI = async (req, res) => {
 };
 
 
-// DELETE USER
-const handleDeleteNewUserAPI = async (req, res) => {
+// DISABLE USER
+const handleDisableUserAPI = async (req, res) => {
     try {
-        const response = await deleteUserService(req.body.id);
+        const response = await disableUserService(req.body.id, req.body.isActive);
         return res.status(200).json(response);
     } catch (error) {
-        console.log("handleDeleteNewUserAPI error", error);
+        console.log("handleDisableUserAPI error", error);
         return res.status(400).json({
             errCode: -1,
             errMessage: "Error from server"
@@ -121,6 +123,6 @@ module.exports = {
     handleCreateNewUserAPI,
     handleEditUserAPI,
     handleChangePasswordAPI,
-    handleDeleteNewUserAPI,
+    handleDisableUserAPI,
     getLookUp
 };
