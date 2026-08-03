@@ -23,6 +23,7 @@ const {
   getAdminBookings,
   getDoctorBookings,
   patchAdminBookingStatus,
+  patchClinicManagerBookingStatus,
   patchDoctorBookingStatus,
 } = require("../controller/bookingStatusController");
 const {
@@ -63,6 +64,14 @@ const {
   getPatientProfileAPI,
   updatePatientProfileAPI
 } = require("../controller/patientController");
+const {
+  getPatient: getClinicManagerPatient,
+  getPatients: getClinicManagerPatients,
+  patchDoctorStatus: patchClinicManagerDoctorStatus,
+  postDoctor: postClinicManagerDoctor,
+  putDoctor: putClinicManagerDoctor,
+  putPatient: putClinicManagerPatient,
+} = require("../controller/clinicManagerController");
 
 const {
   getDoctorPatients,
@@ -214,7 +223,7 @@ router.patch("/api/admin/reviews/:reviewId/visibility", authMiddleware, adminMid
 
 // doctor routes
 router.get("/api/top-doctor", getTopDoctor);
-router.get("/api/all-doctor", getAllDoctor);
+router.get("/api/all-doctor", optionalAuthMiddleware, getAllDoctor);
 router.get("/api/detail-doctor", getDetailDoctor);
 router.post("/api/save-doctor", authMiddleware, postInfoDoctor);
 router.post("/api/create-schedule-doctor", authMiddleware, CreateScheduleDoctor);
@@ -235,6 +244,9 @@ router.get("/api/doctor/medical-records", authMiddleware, getDoctorMedicalRecord
 router.get("/api/doctor/dashboard-statistics", authMiddleware, getDoctorDashboardStatisticsApi);
 router.get("/api/doctor/bookings", authMiddleware, getDoctorBookings);
 router.patch("/api/doctor/bookings/:bookingId/status", authMiddleware, patchDoctorBookingStatus);
+router.post("/api/clinic-manager/doctors", authMiddleware, postClinicManagerDoctor);
+router.put("/api/clinic-manager/doctors/:doctorId", authMiddleware, putClinicManagerDoctor);
+router.patch("/api/clinic-manager/doctors/:doctorId/status", authMiddleware, patchClinicManagerDoctorStatus);
 router.get("/api/doctor/reviews", authMiddleware, getMyDoctorReviews);
 router.post("/api/doctor/reviews/:reviewId/reply", authMiddleware, postDoctorReviewReply);
 router.patch("/api/doctor/reviews/:reviewId/reply", authMiddleware, patchDoctorReviewReply);
@@ -255,6 +267,7 @@ router.post("/api/send-remedy", authMiddleware, postSendRemedy);
 router.delete("/api/delete-schedule-doctor", authMiddleware, handleDeleteScheduleDoctor);
 router.get("/api/get-list-booking-appointment-doctor", authMiddleware, getListAppointmentForDoctor);
 router.get("/api/get-all-list-booking", authMiddleware, getListBooking);
+router.patch("/api/clinic-manager/bookings/:bookingId/status", authMiddleware, patchClinicManagerBookingStatus);
 router.get("/api/get-related-doctors", getRelatedDoctors);
 router.get("/api/doctors/:doctorId/reviews", getPublicDoctorReviewList);
 router.put("/api/update-doctor-info-order", authMiddleware, adminMiddleware, handleUpdateDoctorInfoOrder);
@@ -267,6 +280,9 @@ router.get("/api/payments/:paymentId", authMiddleware, getPaymentIntentApi);
 router.post("/api/payments/:paymentId/cancel", authMiddleware, cancelPaymentIntentApi);
 router.post("/api/verify-book-appointment", postVerifyBookAppointment);
 router.get("/api/all-patien", getAllPatient);
+router.get("/api/clinic-manager/patients", authMiddleware, getClinicManagerPatients);
+router.get("/api/clinic-manager/patients/:patientId", authMiddleware, getClinicManagerPatient);
+router.put("/api/clinic-manager/patients/:patientId", authMiddleware, putClinicManagerPatient);
 router.get("/api/patient/profile", authMiddleware, getPatientProfileAPI);
 router.put("/api/patient/profile", authMiddleware, updatePatientProfileAPI);
 router.get("/api/patient/notifications", authMiddleware, getMyPatientNotifications);

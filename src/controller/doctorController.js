@@ -28,7 +28,10 @@ const {
     canManageSchedule,
     canManageBooking,
     canViewBookingList,
+    getR4ClinicScope,
+    isClinicSpecialtyActive,
 } = require("../service/clinicAccessService");
+const { TERMINAL_BOOKING_STATUS_IDS } = require("../service/bookingStatusService");
 const getTopDoctor = async (req, res) => {
     let limit = req.query.limit;
     if (!limit) {
@@ -47,6 +50,15 @@ const getTopDoctor = async (req, res) => {
 };
 const getAllDoctor = async (req, res) => {
     try {
+        if (req.query?.managedOnly === "1") {
+            const scope = await getR4ClinicScope(req.user);
+            if (scope.errCode !== 0) {
+                return res.status(scope.errCode).json(scope);
+            }
+            const respone = await getAllDoctorHome({ clinicId: scope.clinicId });
+            return res.status(200).json(respone);
+        }
+
         const respone = await getAllDoctorHome();
         return res.status(200).json(respone);
     } catch (error) {
@@ -73,9 +85,19 @@ const getDetailDoctor = async (req, res) => {
 const postInfoDoctor = async (req, res) => {
     try {
         const requestData = req.body || {};
-        const doctorInfo = req.user?.roleId === "R2"
+        let doctorInfo = req.user?.roleId === "R2"
             ? { ...requestData, doctorId: req.user.id }
             : requestData;
+        if (req.user?.roleId === "R4") {
+            const scope = await getR4ClinicScope(req.user);
+            if (scope.errCode !== 0) {
+                return res.status(scope.errCode).json(scope);
+            }
+            if (!(await isClinicSpecialtyActive(scope.clinicId, doctorInfo?.specialtyId))) {
+                return res.status(403).json(FORBIDDEN_RESPONSE);
+            }
+            doctorInfo = { ...doctorInfo, clinicId: scope.clinicId };
+        }
         const allowed = await canSaveDoctorInfo(req.user, doctorInfo?.doctorId, doctorInfo?.clinicId);
         if (!allowed) {
             return res.status(403).json(FORBIDDEN_RESPONSE);
@@ -330,8 +352,17 @@ const getListBooking = async (req, res) => {
             return res.status(403).json(FORBIDDEN_RESPONSE);
         }
 
-        let response = await ListBooking(req.user);
-        return res.status(200).json(response);
+        let response = await ListBooking(req.user, req.query);
+        if (response.errCode === 0 && req.user?.roleId === "R4") {
+            response = {
+                ...response,
+                data: response.data.map((booking) => ({
+                    ...booking,
+                    allowedStatusIds: TERMINAL_BOOKING_STATUS_IDS.includes(booking.statusId) ? [] : null,
+                })),
+            };
+        }
+        return res.status(response.errCode === 409 ? 409 : response.errCode === 403 ? 403 : 200).json(response);
     } catch (error) {
         console.log("getListBooking error", error);
         return res.status(400).json({

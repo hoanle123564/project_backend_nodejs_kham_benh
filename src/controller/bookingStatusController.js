@@ -4,7 +4,12 @@ const {
   getAllowedStatusIds,
   updateBookingStatus,
 } = require("../service/bookingStatusService");
-const { FORBIDDEN_RESPONSE } = require("../service/clinicAccessService");
+const {
+  CONFLICT_RESPONSE,
+  FORBIDDEN_RESPONSE,
+  canManageBooking,
+  getR4ClinicScope,
+} = require("../service/clinicAccessService");
 
 const listBookings = async (req, res, roleId) => {
   if (req.user?.roleId !== roleId) return res.status(403).json(FORBIDDEN_RESPONSE);
@@ -42,9 +47,31 @@ const patchBookingStatus = async (req, res, roleId) => {
 const patchAdminBookingStatus = (req, res) => patchBookingStatus(req, res, "R1");
 const patchDoctorBookingStatus = (req, res) => patchBookingStatus(req, res, "R2");
 
+const patchClinicManagerBookingStatus = async (req, res) => {
+  if (req.user?.roleId !== "R4") return res.status(403).json(FORBIDDEN_RESPONSE);
+
+  const scope = await getR4ClinicScope(req.user);
+  if (scope.errCode !== 0) {
+    return res.status(scope.errCode).json(scope.errCode === 409 ? CONFLICT_RESPONSE : FORBIDDEN_RESPONSE);
+  }
+
+  if (!(await canManageBooking(req.user, req.params.bookingId))) {
+    return res.status(403).json(FORBIDDEN_RESPONSE);
+  }
+
+  const response = await updateBookingStatus({
+    bookingId: req.params.bookingId,
+    statusId: req.body?.statusId,
+    note: req.body?.note,
+    actor: req.user,
+  });
+  return res.status(response.errCode === 403 ? 403 : 200).json(response);
+};
+
 module.exports = {
   getAdminBookings,
   getDoctorBookings,
   patchAdminBookingStatus,
+  patchClinicManagerBookingStatus,
   patchDoctorBookingStatus,
 };

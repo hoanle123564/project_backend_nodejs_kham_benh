@@ -5,6 +5,11 @@ const FORBIDDEN_RESPONSE = {
   errMessage: "Permission denied",
 };
 
+const CONFLICT_RESPONSE = {
+  errCode: 409,
+  errMessage: "Clinic manager must be assigned to exactly one clinic",
+};
+
 // Chuẩn hóa id về số nguyên dương, trả null nếu dữ liệu không hợp lệ.
 const normalizePositiveId = (value) => {
   const normalized = Number(value);
@@ -16,6 +21,32 @@ const isAdmin = (user) => user?.roleId === "R1";
 
 // Kiểm tra user có phải bệnh nhân hay không.
 const isPatient = (user) => user?.roleId === "R3";
+
+const getR4ClinicScope = async (user) => {
+  const userId = normalizePositiveId(user?.id);
+  if (user?.roleId !== "R4" || !userId) {
+    return FORBIDDEN_RESPONSE;
+  }
+
+  const [rows] = await connection.promise().query(
+    `SELECT id FROM clinic WHERE managerUserId = ? ORDER BY id ASC LIMIT 2`,
+    [userId]
+  );
+
+  if (rows.length === 0) {
+    return FORBIDDEN_RESPONSE;
+  }
+
+  if (rows.length > 1) {
+    return CONFLICT_RESPONSE;
+  }
+
+  return {
+    errCode: 0,
+    errMessage: "OK",
+    clinicId: rows[0].id,
+  };
+};
 
 // Kiểm tra user thuộc nhóm có quyền quản lý phòng khám/bác sĩ.
 const isClinicManagerRole = (user) => ["R4", "R2"].includes(user?.roleId);
@@ -30,6 +61,11 @@ const canManageClinic = async (user, clinicId) => {
   const userId = normalizePositiveId(user?.id);
   if (!normalizedClinicId || !userId || !isClinicManagerRole(user)) {
     return false;
+  }
+
+  if (user?.roleId === "R4") {
+    const scope = await getR4ClinicScope(user);
+    return scope.errCode === 0 && Number(scope.clinicId) === normalizedClinicId;
   }
 
   const [rows] = await connection.promise().query(
@@ -90,6 +126,12 @@ const canManageDoctorSchedule = async (user, doctorId) => {
     return false;
   }
 
+  if (user?.roleId === "R4") {
+    const scope = await getR4ClinicScope(user);
+    const clinicId = await getDoctorClinicId(normalizedDoctorId);
+    return scope.errCode === 0 && Number(scope.clinicId) === Number(clinicId);
+  }
+
   const [rows] = await connection.promise().query(
     `
       SELECT di.doctorId
@@ -120,6 +162,16 @@ const canSaveDoctorInfo = async (user, doctorId, targetClinicId) => {
   const normalizedTargetClinicId = normalizePositiveId(targetClinicId);
   if (!normalizedDoctorId || !normalizedTargetClinicId || !isClinicManagerRole(user)) {
     return false;
+  }
+
+  if (user?.roleId === "R4") {
+    const scope = await getR4ClinicScope(user);
+    if (scope.errCode !== 0 || Number(scope.clinicId) !== normalizedTargetClinicId) {
+      return false;
+    }
+
+    const currentClinicId = await getDoctorClinicId(normalizedDoctorId);
+    return !currentClinicId || Number(currentClinicId) === Number(scope.clinicId);
   }
 
   const canManageTargetClinic = await canManageClinic(user, normalizedTargetClinicId);
@@ -334,7 +386,7 @@ const canViewMedicalRecord = async (user, medicalRecordId) => {
 const canViewBookingList = (user) => ["R1", "R2", "R4"].includes(user?.roleId);
 
 // Tạo điều kiện WHERE và params giới hạn danh sách booking theo role hiện tại.
-const getBookingListScope = (user) => {
+const getBookingListScope = async (user) => {
   const userId = normalizePositiveId(user?.id);
 
   if (isAdmin(user)) {
@@ -346,10 +398,15 @@ const getBookingListScope = (user) => {
   }
 
   if (user?.roleId === "R4") {
+    const scope = await getR4ClinicScope(user);
+    if (scope.errCode !== 0) {
+      return { allowed: false, whereClause: "", params: [], ...scope };
+    }
+
     return {
       allowed: true,
-      whereClause: "WHERE c.managerUserId = ?",
-      params: [userId],
+      whereClause: "WHERE c.id = ?",
+      params: [scope.clinicId],
     };
   }
 
@@ -364,8 +421,30 @@ const getBookingListScope = (user) => {
   return { allowed: false, whereClause: "", params: [] };
 };
 
+const isClinicSpecialtyActive = async (clinicId, specialtyId) => {
+  const normalizedClinicId = normalizePositiveId(clinicId);
+  const normalizedSpecialtyId = normalizePositiveId(specialtyId);
+  if (!normalizedClinicId || !normalizedSpecialtyId) {
+    return false;
+  }
+
+  const [rows] = await connection.promise().query(
+    `
+      SELECT id
+      FROM clinic_department
+      WHERE clinicId = ? AND specialtyId = ? AND isActive = 1
+      LIMIT 1
+    `,
+    [normalizedClinicId, normalizedSpecialtyId]
+  );
+
+  return rows.length > 0;
+};
+
 module.exports = {
   FORBIDDEN_RESPONSE,
+  CONFLICT_RESPONSE,
+  getR4ClinicScope,
   canManageClinic,
   canManageDepartment,
   canSaveDoctorInfo,
@@ -380,4 +459,5 @@ module.exports = {
   canViewMedicalRecord,
   canViewBookingList,
   getBookingListScope,
+  isClinicSpecialtyActive,
 };

@@ -5,13 +5,24 @@ const {
   changeStatusClinicDepartment,
 } = require("../service/clinicDepartmentService");
 const {
+  CONFLICT_RESPONSE,
   FORBIDDEN_RESPONSE,
   canManageClinic,
   canManageDepartment,
+  getR4ClinicScope,
 } = require("../service/clinicAccessService");
+
+const ensureR4Scope = async (req, res) => {
+  if (req.user?.roleId !== "R4") return true;
+  const scope = await getR4ClinicScope(req.user);
+  if (scope.errCode === 0) return true;
+  res.status(scope.errCode).json(scope.errCode === 409 ? CONFLICT_RESPONSE : FORBIDDEN_RESPONSE);
+  return false;
+};
 
 const getAllClinicDepartment = async (req, res) => {
   try {
+    if (!(await ensureR4Scope(req, res))) return;
     const allowed = await canManageClinic(req.user, req.query?.clinicId);
     if (!allowed) {
       return res.status(403).json(FORBIDDEN_RESPONSE);
@@ -30,6 +41,7 @@ const getAllClinicDepartment = async (req, res) => {
 
 const postCreateClinicDepartment = async (req, res) => {
   try {
+    if (!(await ensureR4Scope(req, res))) return;
     const allowed = await canManageClinic(req.user, req.body?.clinicId);
     if (!allowed) {
       return res.status(403).json(FORBIDDEN_RESPONSE);
@@ -48,6 +60,7 @@ const postCreateClinicDepartment = async (req, res) => {
 
 const handleEditClinicDepartment = async (req, res) => {
   try {
+    if (!(await ensureR4Scope(req, res))) return;
     const allowed = await canManageDepartment(req.user, req.body?.id);
     if (!allowed) {
       return res.status(403).json(FORBIDDEN_RESPONSE);
@@ -66,6 +79,7 @@ const handleEditClinicDepartment = async (req, res) => {
 
 const handleChangeStatusClinicDepartment = async (req, res) => {
   try {
+    if (!(await ensureR4Scope(req, res))) return;
     const allowed = await canManageDepartment(req.user, req.body?.id);
     if (!allowed) {
       return res.status(403).json(FORBIDDEN_RESPONSE);

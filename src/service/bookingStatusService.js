@@ -45,6 +45,8 @@ const getAllowedStatusIds = (statusId, roleId) => {
   return [];
 };
 
+const isAdminBookingActor = (roleId) => ["R1", "R4"].includes(roleId);
+
 const canMarkPatientNoShow = (visitStatusId) =>
   !visitStatusId || visitStatusId === VISIT_STATUS.WAITING;
 
@@ -125,10 +127,10 @@ const updateBookingStatus = async ({ bookingId, statusId, note, actor }) => {
         return { errCode: 2, errMessage: "Completed or cancelled bookings cannot be changed" };
       }
       const allowedStatusIds = getAllowedStatusIds(booking.statusId, actor.roleId);
-      if (actor.roleId !== "R1" && !allowedStatusIds.includes(normalizedStatusId)) {
+      if (!isAdminBookingActor(actor.roleId) && !allowedStatusIds.includes(normalizedStatusId)) {
         return { errCode: 2, errMessage: "Booking status transition is not allowed" };
       }
-      if (actor.roleId !== "R1" && booking.statusId === normalizedStatusId) {
+      if (!isAdminBookingActor(actor.roleId) && booking.statusId === normalizedStatusId) {
         return { errCode: 2, errMessage: "Booking already has this status" };
       }
       if (
@@ -257,6 +259,7 @@ module.exports = {
   canMarkPatientNoShow,
   getCapacityExcludedStatusIds,
   getAllowedStatusIds,
+  isAdminBookingActor,
   isBookingActiveForCapacity,
   updateBookingStatus,
 };

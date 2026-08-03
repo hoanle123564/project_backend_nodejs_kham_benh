@@ -14,9 +14,19 @@ const {
     updateClinicContentSectionOrder,
 } = require("../service/ClinicService");
 const {
+    CONFLICT_RESPONSE,
     FORBIDDEN_RESPONSE,
     canManageClinic,
+    getR4ClinicScope,
 } = require("../service/clinicAccessService");
+
+const resolveR4Scope = async (req, res) => {
+    if (req.user?.roleId !== "R4") return null;
+    const scope = await getR4ClinicScope(req.user);
+    if (scope.errCode === 0) return scope;
+    res.status(scope.errCode).json(scope.errCode === 409 ? CONFLICT_RESPONSE : FORBIDDEN_RESPONSE);
+    return false;
+};
 
 const postCreateClinic = async (req, res) => {
     try {
@@ -36,6 +46,8 @@ const getAllClinic = async (req, res) => {
         if (managedOnly && !["R2", "R4"].includes(req.user?.roleId)) {
             return res.status(403).json(FORBIDDEN_RESPONSE);
         }
+        const scope = await resolveR4Scope(req, res);
+        if (scope === false) return;
 
         let respone = await getClinic(
             managedOnly ? { ...req.query, managerUserId: req.user.id } : req.query
@@ -57,6 +69,8 @@ const getAllClinic = async (req, res) => {
 
 const getDetailClinicById = async (req, res) => {
     try {
+        const scope = await resolveR4Scope(req, res);
+        if (scope === false) return;
         if (req.query?.managedOnly === "1") {
             const allowed = await canManageClinic(req.user, req.query?.id);
             if (!allowed) {
@@ -76,6 +90,9 @@ const getDetailClinicById = async (req, res) => {
 };
 const handleDeleteClinic = async (req, res) => {
     try {
+        if (req.user?.roleId === "R4") {
+            return res.status(403).json(FORBIDDEN_RESPONSE);
+        }
         const clinicId = req.body.id;
         const allowed = await canManageClinic(req.user, clinicId);
         if (!allowed) {
@@ -97,6 +114,8 @@ const handleDeleteClinic = async (req, res) => {
 const handleEditClinic = async (req, res) => {
     try {
         const data = { ...req.body };
+        const scope = await resolveR4Scope(req, res);
+        if (scope === false) return;
         const allowed = await canManageClinic(req.user, data?.id);
         if (!allowed) {
             return res.status(403).json(FORBIDDEN_RESPONSE);
@@ -104,6 +123,11 @@ const handleEditClinic = async (req, res) => {
 
         if (req.user?.roleId === "R2") {
             data.managerUserId = req.user.id;
+        }
+        if (req.user?.roleId === "R4") {
+            data.managerUserId = req.user.id;
+            delete data.isActive;
+            delete data.displayOrder;
         }
 
         let response = await editClinic(data);

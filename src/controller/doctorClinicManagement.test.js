@@ -88,7 +88,7 @@ test("doctor scoped clinic reads use the JWT owner and reject unowned access", {
   assert.equal(deniedListResponse.body.errCode, 403);
 });
 
-test("doctor profile update derives its target from JWT", { concurrency: false }, async () => {
+test("doctor and clinic-manager profile updates derive their target from JWT", { concurrency: false }, async () => {
   let updateOptions;
   const userController = loadController("./userController", {
     "../service/userService": {
@@ -96,7 +96,7 @@ test("doctor profile update derives its target from JWT", { concurrency: false }
       getAllUsersService: async () => ({}),
       createNewUserService: async () => ({}),
       changePasswordService: async () => ({}),
-      deleteUserService: async () => ({}),
+      disableUserService: async () => ({}),
       updateUserService: async (_data, options) => {
         updateOptions = options;
         return { errCode: 0, errMessage: "Update successful", data: {} };
@@ -116,6 +116,18 @@ test("doctor profile update derives its target from JWT", { concurrency: false }
 
   assert.equal(response.statusCode, 200);
   assert.deepEqual(updateOptions, { selfUserId: 7 });
+
+  const clinicManagerResponse = createResponse();
+  await userController.handleEditUserAPI(
+    {
+      user: { id: 8, roleId: "R4" },
+      body: { id: 99, email: "other@example.com", roleId: "R1", firstName: "Clinic manager" },
+    },
+    clinicManagerResponse
+  );
+
+  assert.equal(clinicManagerResponse.statusCode, 200);
+  assert.deepEqual(updateOptions, { selfUserId: 8 });
 });
 
 test("doctor professional profile uses the JWT doctor id", { concurrency: false }, async () => {

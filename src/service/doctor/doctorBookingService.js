@@ -221,20 +221,54 @@ const GetListAppointment = async (doctorId) => {
 };
 
 
-const ListBooking = async (user) => {
+const ListBooking = async (user, query = {}) => {
   try {
-    const scope = getBookingListScope(user);
+    const scope = await getBookingListScope(user);
     if (!scope.allowed) {
       return {
-        errCode: 403,
-        errMessage: "Permission denied",
+        errCode: scope.errCode || 403,
+        errMessage: scope.errMessage || "Permission denied",
         data: [],
       };
     }
 
+    const whereParts = [scope.whereClause || "WHERE 1 = 1"];
+    const params = [...scope.params];
+    const doctorId = Number(query.doctorId);
+    const date = String(query.date || "").trim();
+    const statusId = String(query.statusId || "").trim();
+    const appointmentTypeId = String(query.appointmentTypeId || "").trim();
+    const search = String(query.search || "").trim();
+    const isPaged = user?.roleId === "R4" || query.page !== undefined || query.limit !== undefined;
+    const page = Math.max(Number(query.page) || 1, 1);
+    const limit = Math.min(Math.max(Number(query.limit) || 20, 1), 100);
+
+    if (Number.isInteger(doctorId) && doctorId > 0) {
+      whereParts.push("AND s.doctorId = ?");
+      params.push(doctorId);
+    }
+    if (date) {
+      whereParts.push("AND b.date = ?");
+      params.push(date);
+    }
+    if (statusId) {
+      whereParts.push("AND b.statusId = ?");
+      params.push(statusId);
+    }
+    if (appointmentTypeId) {
+      whereParts.push("AND s.appointmentTypeId = ?");
+      params.push(appointmentTypeId);
+    }
+    if (search) {
+      const keyword = `%${search}%`;
+      whereParts.push("AND (CONCAT_WS(' ', patient.firstName, patient.lastName) LIKE ? OR patient.phoneNumber LIKE ?)");
+      params.push(keyword, keyword);
+    }
+    const whereClause = whereParts.join(" ");
+
     const [rows] = await connection.promise().query(
       `
-      SELECT
+      SELECT ${isPaged ? "SQL_CALC_FOUND_ROWS" : ""}
           b.id,
           b.scheduleId,
           b.date,
@@ -325,16 +359,26 @@ const ListBooking = async (user) => {
           ON p.statusId = paymentStatus.keyMap
          AND paymentStatus.type = 'PAYMENT_TRANSACTION_STATUS'
 
-      ${scope.whereClause}
-      ORDER BY b.date DESC, COALESCE(bq.queueNumber, 999999) ASC, COALESCE(TIME_TO_SEC(s.startTime), CAST(SUBSTRING(s.timeType, 2) AS UNSIGNED)) ASC
-      `,
-      scope.params
+       ${whereClause}
+       ORDER BY b.date DESC, COALESCE(bq.queueNumber, 999999) ASC, COALESCE(TIME_TO_SEC(s.startTime), CAST(SUBSTRING(s.timeType, 2) AS UNSIGNED)) ASC
+       ${isPaged ? "LIMIT ? OFFSET ?" : ""}
+       `,
+       isPaged ? [...params, limit, (page - 1) * limit] : params
     );
+
+    const pagination = isPaged
+      ? (() => ({ page, limit }))
+      : null;
+    if (pagination) {
+      const [countRows] = await connection.promise().query("SELECT FOUND_ROWS() AS total");
+      pagination.total = Number(countRows[0]?.total) || 0;
+    }
 
     return {
       errCode: 0,
       errMessage: "OK",
       data: (rows || []).map((row) => ({ ...row, paymentStatus: getPublicPaymentStatus(row.paymentStatusId) })),
+      ...(pagination ? { pagination } : {}),
     };
   } catch (error) {
     console.log("ListBooking error:", error);

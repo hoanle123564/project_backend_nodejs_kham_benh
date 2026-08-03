@@ -238,9 +238,14 @@ const getDetailDoctorById = async (query) => {
   }
 };
 
-const getAllDoctorHome = async () => {
+const getAllDoctorHome = async ({ clinicId } = {}) => {
   const status = {};
   try {
+    const params = [];
+    const clinicFilter = Number.isInteger(Number(clinicId)) && Number(clinicId) > 0
+      ? "AND di.clinicId = ?"
+      : "";
+    if (clinicFilter) params.push(Number(clinicId));
     const [rows] = await connection.promise().query(
       `
         SELECT
@@ -289,8 +294,10 @@ const getAllDoctorHome = async () => {
         LEFT JOIN lookup AS lp
           ON lp.keyMap = c.provinceCode AND lp.type = 'PROVINCE'
         WHERE u.roleId = 'R2'
+          ${clinicFilter}
         ORDER BY di.displayOrder ASC, u.createdAt DESC
-      `
+      `,
+      params
     );
 
     status.errCode = 0;
@@ -358,6 +365,32 @@ const saveDetailInfoDoctor = async (data) => {
       );
 
     const existingDoctorInfo = checkClinic[0] || {};
+
+    if (
+      existingDoctorInfo.clinicId &&
+      Number(existingDoctorInfo.clinicId) !== Number(clinicId)
+    ) {
+      const [[bookingRows], [scheduleRows], [ruleRows]] = await Promise.all([
+        connection.promise().query(
+          `SELECT b.id FROM booking b INNER JOIN schedule s ON s.id = b.scheduleId WHERE s.doctorId = ? LIMIT 1`,
+          [doctorId]
+        ),
+        connection.promise().query(
+          `SELECT id FROM schedule WHERE doctorId = ? AND date >= CURRENT_DATE LIMIT 1`,
+          [doctorId]
+        ),
+        connection.promise().query(
+          `SELECT id FROM doctor_schedule_rule WHERE doctorId = ? AND isActive = 1 LIMIT 1`,
+          [doctorId]
+        ),
+      ]);
+      if (bookingRows.length || scheduleRows.length || ruleRows.length) {
+        return {
+          errCode: 409,
+          errMessage: "Cannot transfer a doctor with booking history, future schedules, or active schedule rules",
+        };
+      }
+    }
 
     if (Object.prototype.hasOwnProperty.call(data, "image")) {
       await connection.promise().query(
