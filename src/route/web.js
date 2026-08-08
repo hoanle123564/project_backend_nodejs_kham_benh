@@ -65,6 +65,7 @@ const {
   updatePatientProfileAPI
 } = require("../controller/patientController");
 const {
+  getDashboard: getClinicManagerDashboard,
   getPatient: getClinicManagerPatient,
   getPatients: getClinicManagerPatients,
   patchDoctorStatus: patchClinicManagerDoctorStatus,
@@ -244,6 +245,7 @@ router.get("/api/doctor/medical-records", authMiddleware, getDoctorMedicalRecord
 router.get("/api/doctor/dashboard-statistics", authMiddleware, getDoctorDashboardStatisticsApi);
 router.get("/api/doctor/bookings", authMiddleware, getDoctorBookings);
 router.patch("/api/doctor/bookings/:bookingId/status", authMiddleware, patchDoctorBookingStatus);
+router.get("/api/clinic-manager/dashboard-statistics", authMiddleware, getClinicManagerDashboard);
 router.post("/api/clinic-manager/doctors", authMiddleware, postClinicManagerDoctor);
 router.put("/api/clinic-manager/doctors/:doctorId", authMiddleware, putClinicManagerDoctor);
 router.patch("/api/clinic-manager/doctors/:doctorId/status", authMiddleware, patchClinicManagerDoctorStatus);

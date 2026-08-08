@@ -13,6 +13,7 @@ const OPERATION_STATUS = Object.freeze({
     COMPLETED: "completed",
     CANCELLED: "cancelled",
 });
+const CLINIC_PATIENT_BOOKING_STATUS_IDS = ["S1", "S2", "S8", "S3"];
 
 const ensurePriceAtBookingColumn = async () => {
     const [columns] = await connection.promise().query("SHOW COLUMNS FROM booking LIKE 'priceAtBooking'");
@@ -30,6 +31,23 @@ const normalizePositiveInteger = (value, defaultValue, maxValue) => {
     }
 
     return Math.min(parsedValue, maxValue);
+};
+
+const getDashboardScope = (clinicId) => {
+    if (clinicId === undefined || clinicId === null) {
+        return { clinicId: null, scheduleJoin: "", params: [] };
+    }
+
+    const normalizedClinicId = Number(clinicId);
+    if (!Number.isInteger(normalizedClinicId) || normalizedClinicId <= 0) {
+        throw new Error("Invalid clinic scope");
+    }
+
+    return {
+        clinicId: normalizedClinicId,
+        scheduleJoin: "INNER JOIN doctor_info di ON di.doctorId = s.doctorId AND di.clinicId = ?",
+        params: [normalizedClinicId],
+    };
 };
 
 const getOperationalStatus = (bookingStatusId, visitStatusId) => {
@@ -169,8 +187,9 @@ const buildEmptyRevenueData = (range) => {
     return items;
 };
 
-const getRevenueStatistics = async (revenueType) => {
+const getRevenueStatistics = async (revenueType, clinicId) => {
     const range = getRevenueRange(revenueType);
+    const scope = getDashboardScope(clinicId);
     const chartData = buildEmptyRevenueData(range);
     const chartDataByKey = chartData.reduce((acc, item) => {
         acc[item.key] = item;
@@ -183,10 +202,13 @@ const getRevenueStatistics = async (revenueType) => {
         FROM examination_visit ev
         INNER JOIN booking b
             ON b.id = ev.bookingId
+        INNER JOIN schedule s
+            ON s.id = b.scheduleId
+        ${scope.scheduleJoin}
         WHERE ev.paymentStatusId = 'PS2'
           AND ev.examDate BETWEEN ? AND ?
         `,
-        [range.startDate.format("YYYY-MM-DD"), range.endDate.format("YYYY-MM-DD")]
+        [...scope.params, range.startDate.format("YYYY-MM-DD"), range.endDate.format("YYYY-MM-DD")]
     );
 
     rows.forEach((row) => {
@@ -206,8 +228,9 @@ const getRevenueStatistics = async (revenueType) => {
     };
 };
 
-const getTopDoctorStatistics = async (topDoctorType) => {
+const getTopDoctorStatistics = async (topDoctorType, clinicId) => {
     const range = getTopDoctorRange(topDoctorType);
+    const scope = getDashboardScope(clinicId);
 
     const [rows] = await connection.promise().query(
         `
@@ -219,6 +242,7 @@ const getTopDoctorStatistics = async (topDoctorType) => {
         FROM booking b
         JOIN schedule s
             ON s.id = b.scheduleId
+        ${scope.scheduleJoin}
         JOIN users u
             ON u.id = s.doctorId
         WHERE b.statusId = 'S3'
@@ -227,7 +251,7 @@ const getTopDoctorStatistics = async (topDoctorType) => {
         ORDER BY examinationCount DESC
         LIMIT 5
         `,
-        [range.startDate.format("YYYY-MM-DD"), range.endDate.format("YYYY-MM-DD")]
+        [...scope.params, range.startDate.format("YYYY-MM-DD"), range.endDate.format("YYYY-MM-DD")]
     );
 
     return rows.map((row) => ({
@@ -261,8 +285,9 @@ const getDoctorRatioStatistics = async () => {
     };
 };
 
-const getTodayOverview = async () => {
+const getTodayOverview = async (clinicId) => {
     const today = moment().format("YYYY-MM-DD");
+    const scope = getDashboardScope(clinicId);
 
     const [rows] = await connection.promise().query(
         `
@@ -270,11 +295,14 @@ const getTodayOverview = async () => {
             b.statusId AS bookingStatusId,
             ev.statusId AS visitStatusId
         FROM booking b
+        INNER JOIN schedule s
+            ON s.id = b.scheduleId
+        ${scope.scheduleJoin}
         LEFT JOIN examination_visit ev
             ON ev.bookingId = b.id
         WHERE b.date = ?
         `,
-        [today]
+        [...scope.params, today]
     );
 
     const overview = {
@@ -295,7 +323,8 @@ const getTodayOverview = async () => {
     return overview;
 };
 
-const getPaymentOverview = async () => {
+const getPaymentOverview = async (clinicId) => {
+    const scope = getDashboardScope(clinicId);
     const [rows] = await connection.promise().query(
         `
         SELECT
@@ -308,7 +337,11 @@ const getPaymentOverview = async () => {
         FROM examination_visit ev
         INNER JOIN booking b
             ON b.id = ev.bookingId
-        `
+        INNER JOIN schedule s
+            ON s.id = b.scheduleId
+        ${scope.scheduleJoin}
+        `,
+        scope.params
     );
 
     const result = rows[0] || {};
@@ -327,7 +360,8 @@ const getPaymentOverview = async () => {
     };
 };
 
-const getAppointmentTypeStats = async () => {
+const getAppointmentTypeStats = async (clinicId) => {
+    const scope = getDashboardScope(clinicId);
     const defaultStats = {
         [APPOINTMENT_TYPE.OFFLINE]: {
             appointmentTypeId: APPOINTMENT_TYPE.OFFLINE,
@@ -350,9 +384,10 @@ const getAppointmentTypeStats = async () => {
         FROM booking b
         INNER JOIN schedule s
             ON s.id = b.scheduleId
+        ${scope.scheduleJoin}
         GROUP BY COALESCE(s.appointmentTypeId, ?)
         `,
-        [APPOINTMENT_TYPE.OFFLINE, APPOINTMENT_TYPE.OFFLINE]
+        [APPOINTMENT_TYPE.OFFLINE, ...scope.params, APPOINTMENT_TYPE.OFFLINE]
     );
 
     rows.forEach((row) => {
@@ -373,11 +408,21 @@ const getAppointmentTypeStats = async () => {
     };
 };
 
-const getRecentBookings = async ({ page, limit }) => {
+const getRecentBookings = async ({ page, limit, clinicId }) => {
     const offset = (page - 1) * limit;
+    const scope = getDashboardScope(clinicId);
 
     const [countRows, rows] = await Promise.all([
-        connection.promise().query("SELECT COUNT(*) AS total FROM booking").then(([result]) => result),
+        connection.promise().query(
+            `
+            SELECT COUNT(*) AS total
+            FROM booking b
+            INNER JOIN schedule s
+                ON s.id = b.scheduleId
+            ${scope.scheduleJoin}
+            `,
+            scope.params
+        ).then(([result]) => result),
         connection.promise().query(
             `
             SELECT
@@ -399,6 +444,7 @@ const getRecentBookings = async ({ page, limit }) => {
             FROM booking b
             INNER JOIN schedule s
                 ON s.id = b.scheduleId
+            ${scope.scheduleJoin}
             INNER JOIN users patient
                 ON patient.id = b.patientId
             INNER JOIN users doctor
@@ -411,7 +457,7 @@ const getRecentBookings = async ({ page, limit }) => {
             ORDER BY b.createdAt DESC, b.id DESC
             LIMIT ? OFFSET ?
             `,
-            [limit, offset]
+            [...scope.params, limit, offset]
         ).then(([result]) => result),
     ]);
 
@@ -445,10 +491,72 @@ const getRecentBookings = async ({ page, limit }) => {
     };
 };
 
-const getDashboardStatistics = async ({ revenueType, topDoctorType, recentPage, recentLimit }) => {
+const getClinicSummary = async (clinicId) => {
+    const scope = getDashboardScope(clinicId);
+    const statusPlaceholders = CLINIC_PATIENT_BOOKING_STATUS_IDS.map(() => "?").join(", ");
+    const [patientRows, doctorRows, departmentRows] = await Promise.all([
+        connection.promise().query(
+            `
+            SELECT COUNT(DISTINCT b.patientId) AS total
+            FROM booking b
+            INNER JOIN schedule s
+                ON s.id = b.scheduleId
+            ${scope.scheduleJoin}
+            WHERE b.statusId IN (${statusPlaceholders})
+            `,
+            [...scope.params, ...CLINIC_PATIENT_BOOKING_STATUS_IDS]
+        ).then(([rows]) => rows),
+        connection.promise().query(
+            "SELECT COUNT(*) AS total FROM doctor_info WHERE clinicId = ?",
+            [scope.clinicId]
+        ).then(([rows]) => rows),
+        connection.promise().query(
+            "SELECT COUNT(*) AS total FROM clinic_department WHERE clinicId = ? AND isActive = 1",
+            [scope.clinicId]
+        ).then(([rows]) => rows),
+    ]);
+
+    return {
+        patients: Number(patientRows[0]?.total) || 0,
+        doctors: Number(doctorRows[0]?.total) || 0,
+        departments: Number(departmentRows[0]?.total) || 0,
+    };
+};
+
+const getBookingStatusOverview = async (clinicId) => {
+    const scope = getDashboardScope(clinicId);
+    const [rows] = await connection.promise().query(
+        `
+        SELECT b.statusId AS bookingStatusId, ev.statusId AS visitStatusId
+        FROM booking b
+        INNER JOIN schedule s
+            ON s.id = b.scheduleId
+        ${scope.scheduleJoin}
+        LEFT JOIN examination_visit ev
+            ON ev.bookingId = b.id
+        `,
+        scope.params
+    );
+    const overview = {
+        pendingConfirmation: 0,
+        waitingExam: 0,
+        inProgress: 0,
+        completed: 0,
+        cancelled: 0,
+    };
+
+    rows.forEach((row) => {
+        overview[getOperationalStatus(row.bookingStatusId, row.visitStatusId)] += 1;
+    });
+
+    return overview;
+};
+
+const getDashboardStatistics = async ({ revenueType, topDoctorType, recentPage, recentLimit, clinicId }) => {
 
     const page = normalizePositiveInteger(recentPage, 1, Number.MAX_SAFE_INTEGER);
     const limit = normalizePositiveInteger(recentLimit, 5, 5);
+    const isClinicScoped = clinicId !== undefined && clinicId !== null;
 
     const [
         revenue,
@@ -458,14 +566,18 @@ const getDashboardStatistics = async ({ revenueType, topDoctorType, recentPage, 
         paymentOverview,
         appointmentTypeStats,
         recentBookings,
+        summary,
+        bookingStatusOverview,
     ] = await Promise.all([
-        getRevenueStatistics(revenueType),
-        getTopDoctorStatistics(topDoctorType),
-        getDoctorRatioStatistics(),
-        getTodayOverview(),
-        getPaymentOverview(),
-        getAppointmentTypeStats(),
-        getRecentBookings({ page, limit }),
+        getRevenueStatistics(revenueType, clinicId),
+        getTopDoctorStatistics(topDoctorType, clinicId),
+        isClinicScoped ? Promise.resolve(null) : getDoctorRatioStatistics(),
+        getTodayOverview(clinicId),
+        getPaymentOverview(clinicId),
+        getAppointmentTypeStats(clinicId),
+        getRecentBookings({ page, limit, clinicId }),
+        isClinicScoped ? getClinicSummary(clinicId) : Promise.resolve(null),
+        isClinicScoped ? getBookingStatusOverview(clinicId) : Promise.resolve(null),
     ]);
 
     return {
@@ -474,11 +586,13 @@ const getDashboardStatistics = async ({ revenueType, topDoctorType, recentPage, 
         data: {
             revenue,
             topDoctors,
-            doctorRatio,
             todayOverview,
             paymentOverview,
             appointmentTypeStats,
             recentBookings,
+            ...(isClinicScoped
+                ? { summary, bookingStatusOverview }
+                : { doctorRatio }),
         },
     };
 };

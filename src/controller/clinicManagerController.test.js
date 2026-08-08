@@ -28,6 +28,7 @@ const loadController = (mocks) => {
 
 test("clinic-manager controller derives the clinic from the R4 JWT", { concurrency: false }, async () => {
   let receivedClinicId = null;
+  let dashboardOptions = null;
   const controller = loadController({
     "../service/clinicManagerService": {
       createClinicDoctor: async () => ({ errCode: 0, errMessage: "OK", data: {} }),
@@ -39,14 +40,22 @@ test("clinic-manager controller derives the clinic from the R4 JWT", { concurren
       updateClinicDoctor: async () => ({ errCode: 0, errMessage: "OK", data: {} }),
       updateClinicPatient: async () => ({ errCode: 0, errMessage: "OK", data: {} }),
     },
+    "../service/adminDashboardService": {
+      getDashboardStatistics: async (options) => {
+        dashboardOptions = options;
+        return { errCode: 0, errMessage: "OK", data: {} };
+      },
+    },
     "../service/DoctorService": { changeStatusDoctorInfo: async () => ({ errCode: 0, errMessage: "OK" }) },
     "../service/clinicAccessService": {
       CONFLICT_RESPONSE: { errCode: 409, errMessage: "Clinic manager must be assigned to exactly one clinic" },
       FORBIDDEN_RESPONSE: { errCode: 403, errMessage: "Permission denied" },
       canManageDoctorSchedule: async () => true,
-      getR4ClinicScope: async (user) => user.id === 9
-        ? { errCode: 409, errMessage: "Clinic manager must be assigned to exactly one clinic" }
-        : { errCode: 0, errMessage: "OK", clinicId: 42 },
+      getR4ClinicScope: async (user) => {
+        if (user.id === 9) return { errCode: 409, errMessage: "Clinic manager must be assigned to exactly one clinic" };
+        if (user.id === 10) return { errCode: 403, errMessage: "Permission denied" };
+        return { errCode: 0, errMessage: "OK", clinicId: 42 };
+      },
     },
   });
 
@@ -55,8 +64,25 @@ test("clinic-manager controller derives the clinic from the R4 JWT", { concurren
   assert.equal(allowed.statusCode, 200);
   assert.equal(receivedClinicId, 42);
 
+  const dashboard = response();
+  await controller.getDashboard({
+    user: { id: 8, roleId: "R4" },
+    query: { clinicId: "99", revenueType: "year", topDoctorType: "quarter", recentPage: "2", recentLimit: "5" },
+  }, dashboard);
+  assert.equal(dashboard.statusCode, 200);
+  assert.equal(dashboardOptions.clinicId, 42);
+  assert.equal(dashboardOptions.revenueType, "year");
+  assert.equal(dashboardOptions.topDoctorType, "quarter");
+  assert.equal(dashboardOptions.recentPage, "2");
+  assert.equal(dashboardOptions.recentLimit, "5");
+
   const conflict = response();
-  await controller.getPatients({ user: { id: 9, roleId: "R4" }, query: {} }, conflict);
+  await controller.getDashboard({ user: { id: 9, roleId: "R4" }, query: {} }, conflict);
   assert.equal(conflict.statusCode, 409);
   assert.equal(conflict.body.errCode, 409);
+
+  const forbidden = response();
+  await controller.getDashboard({ user: { id: 10, roleId: "R4" }, query: {} }, forbidden);
+  assert.equal(forbidden.statusCode, 403);
+  assert.equal(forbidden.body.errCode, 403);
 });

@@ -6,6 +6,7 @@ const {
   updateClinicPatient,
 } = require("../service/clinicManagerService");
 const { changeStatusDoctorInfo } = require("../service/DoctorService");
+const { getDashboardStatistics } = require("../service/adminDashboardService");
 const {
   CONFLICT_RESPONSE,
   FORBIDDEN_RESPONSE,
@@ -30,6 +31,22 @@ const getPatients = async (req, res) => {
     return send(res, await getClinicPatients(scope.clinicId, req.query));
   } catch (error) {
     return send(res, { errCode: 1, errMessage: "Error from server", data: [] });
+  }
+};
+
+const getDashboard = async (req, res) => {
+  try {
+    const scope = await scopeFor(req, res);
+    if (!scope) return;
+    return send(res, await getDashboardStatistics({
+      revenueType: req.query?.revenueType,
+      topDoctorType: req.query?.topDoctorType,
+      recentPage: req.query?.recentPage,
+      recentLimit: req.query?.recentLimit,
+      clinicId: scope.clinicId,
+    }));
+  } catch (error) {
+    return send(res, { errCode: 1, errMessage: "Error from server", data: {} });
   }
 };
 
@@ -90,6 +107,7 @@ const patchDoctorStatus = async (req, res) => {
 };
 
 module.exports = {
+  getDashboard,
   getPatient,
   getPatients,
   patchDoctorStatus,
