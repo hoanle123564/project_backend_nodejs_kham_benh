@@ -66,6 +66,31 @@ const rangesOverlap = (aStart, aEnd, bStart, bEnd) => {
   return startA < endB && endA > startB;
 };
 
+const fixedRulesOverlap = (left = {}, right = {}) => {
+  if (left.ruleType !== RULE_TYPES.FIXED || right.ruleType !== RULE_TYPES.FIXED) return false;
+  if (Number(left.isActive) === 0 || Number(right.isActive) === 0) return false;
+  if (
+    left.doctorId !== undefined &&
+    right.doctorId !== undefined &&
+    Number(left.doctorId) !== Number(right.doctorId)
+  ) {
+    return false;
+  }
+  if (Number(left.weekday) !== Number(right.weekday)) return false;
+  if ((left.appointmentTypeId || null) !== (right.appointmentTypeId || null)) return false;
+
+  return rangesOverlap(left.startTime, left.endTime, right.startTime, right.endTime);
+};
+
+const findFixedRuleOverlap = (candidate, rules = [], excludeRuleId = null) => {
+  const hasCandidateId = excludeRuleId !== null && excludeRuleId !== undefined && excludeRuleId !== "";
+
+  return rules.find((rule) => {
+    if (hasCandidateId && Number(rule.id) === Number(excludeRuleId)) return false;
+    return fixedRulesOverlap(candidate, rule);
+  }) || null;
+};
+
 const generateSlots = (startTime, endTime, slotDurationMinutes) => {
   const start = timeToSeconds(startTime);
   const end = timeToSeconds(endTime);
@@ -158,6 +183,8 @@ module.exports = {
   isScheduleStarted,
   normalizeDate,
   normalizeTime,
+  fixedRulesOverlap,
+  findFixedRuleOverlap,
   rangesOverlap,
   timeToSeconds,
   validateRulePayload,

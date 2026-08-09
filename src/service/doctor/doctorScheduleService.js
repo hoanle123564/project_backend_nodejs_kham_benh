@@ -8,6 +8,7 @@ const {
 } = require("../bookingStatusService");
 const {
   APPOINTMENT_TYPES,
+  findFixedRuleOverlap,
   RULE_TYPES,
   SOURCE_TYPES,
   generateSlots,
@@ -23,6 +24,7 @@ const DEFAULT_APPOINTMENT_TYPE_ID = "AT1";
 const MATERIALIZATION_LOOKAHEAD_DAYS = 30;
 const DYNAMIC_TIME_TYPE_PREFIX = "D";
 const CAPACITY_EXCLUDED_STATUS_IDS = getCapacityExcludedStatusIds();
+const FIXED_SCHEDULE_OVERLAP_CODE = "FIXED_SCHEDULE_OVERLAP";
 
 const activeStatusPlaceholders = () => CAPACITY_EXCLUDED_STATUS_IDS.map(() => "?").join(", ");
 
@@ -125,6 +127,36 @@ const getScheduleRuleById = async (ruleId, db) => {
 
   return rows[0] ? normalizeRuleRow(rows[0]) : null;
 };
+
+const getFixedScheduleOverlap = async (candidate, db, { forUpdate = false } = {}) => {
+  if (candidate?.ruleType !== RULE_TYPES.FIXED || Number(candidate.isActive) === 0) return null;
+
+  const executor = getDb(db);
+  const [rows] = await executor.query(
+    `
+      SELECT id, doctorId, ruleType, weekday, appointmentTypeId, startTime, endTime, isActive
+      FROM doctor_schedule_rule
+      WHERE doctorId = ?
+        AND ruleType = ?
+        AND isActive = 1
+        AND weekday = ?
+        AND appointmentTypeId <=> ?
+      ${forUpdate ? "FOR UPDATE" : ""}
+    `,
+    [candidate.doctorId, RULE_TYPES.FIXED, candidate.weekday, candidate.appointmentTypeId]
+  );
+
+  return findFixedRuleOverlap(candidate, rows, candidate.id);
+};
+
+const fixedScheduleOverlapResponse = (conflictRule) => ({
+  errCode: 2,
+  errMessage: "Fixed schedule overlaps another active fixed schedule",
+  data: {
+    code: FIXED_SCHEDULE_OVERLAP_CODE,
+    conflictRuleId: conflictRule?.id || null,
+  },
+});
 
 const getScheduleRules = async (doctorId, filters = {}, db) => {
   const normalizedDoctorId = normalizePositiveId(doctorId);
@@ -718,6 +750,9 @@ const previewScheduleRuleChange = async (data) => {
       id: merged.id,
       doctorId: normalizePositiveId(merged.doctorId),
     });
+    const overlap = await getFixedScheduleOverlap(draftRule);
+    if (overlap) return fixedScheduleOverlapResponse(overlap);
+
     const dates = await getMaterializationDatesForRule(draftRule, currentRule);
     const impact = {
       affectedBookingCount: 0,
@@ -846,6 +881,9 @@ const createScheduleRule = async (data, actor = {}) => {
 
     return await withTransaction(async (db) => {
       const rule = normalizeRuleRow({ ...validation.value, doctorId });
+      const overlap = await getFixedScheduleOverlap(rule, db, { forUpdate: true });
+      if (overlap) return fixedScheduleOverlapResponse(overlap);
+
       const id = await insertScheduleRule(rule, actor?.id, db);
       const savedRule = { ...rule, id };
       const impact = await applyRuleMutationImpact(savedRule, null, db);
@@ -885,6 +923,9 @@ const updateScheduleRule = async (ruleId, data) => {
         id,
         doctorId: currentRule.doctorId,
       });
+      const overlap = await getFixedScheduleOverlap(updatedRule, db, { forUpdate: true });
+      if (overlap) return fixedScheduleOverlapResponse(overlap);
+
       await updateScheduleRuleRow(updatedRule, db);
       const impact = await applyRuleMutationImpact(updatedRule, currentRule, db);
       return {
