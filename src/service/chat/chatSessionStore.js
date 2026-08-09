@@ -51,6 +51,20 @@ const sessionListItem = (session) => ({
   updatedAt: session.updatedAt || null,
 });
 
+const normalizeSessionTitle = (title) => {
+  const normalizedTitle = String(title || "").replace(/\s+/g, " ").trim();
+
+  if (!normalizedTitle) {
+    throw createChatError(400, "Tên cuộc trò chuyện không được để trống.");
+  }
+
+  if (normalizedTitle.length > 255) {
+    throw createChatError(400, "Tên cuộc trò chuyện không được vượt quá 255 ký tự.");
+  }
+
+  return normalizedTitle;
+};
+
 const getOwnedSession = async (sessionId, patientId) => {
   requirePatientId(patientId);
 
@@ -159,6 +173,23 @@ const getChatMessages = async (patientId, sessionId) => {
   }));
 };
 
+const renameChatSession = async (patientId, sessionId, title) => {
+  const session = await getOwnedSession(sessionId, patientId);
+  const normalizedTitle = normalizeSessionTitle(title);
+
+  await connection.promise().query(
+    "UPDATE chat_sessions SET title = ? WHERE id = ?",
+    [normalizedTitle, session.id]
+  );
+
+  return { ...sessionListItem(session), title: normalizedTitle };
+};
+
+const deleteChatSession = async (patientId, sessionId) => {
+  const session = await getOwnedSession(sessionId, patientId);
+  await connection.promise().query("DELETE FROM chat_sessions WHERE id = ?", [session.id]);
+};
+
 const saveSession = async (session) => {
   await connection.promise().query(
     `
@@ -220,11 +251,14 @@ module.exports = {
   rowToSession,
   createSessionObject,
   sessionListItem,
+  normalizeSessionTitle,
   getOwnedSession,
   createChatSession,
   getOrCreateSession,
   getChatSessions,
   getChatMessages,
+  renameChatSession,
+  deleteChatSession,
   saveSession,
   resetSession,
   saveChatMessage,

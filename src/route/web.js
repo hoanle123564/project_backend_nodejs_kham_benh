@@ -104,6 +104,8 @@ const {
   getChatSessionList,
   postChatSession,
   getChatSessionMessages,
+  patchChatSession,
+  removeChatSession,
   postChatMessage,
 } = require("../controller/chatController");
 const {
@@ -303,6 +305,8 @@ router.post("/api/video-consultation/mark-started", authMiddleware, postMarkStar
 router.get("/api/chat/sessions", authMiddleware, getChatSessionList);
 router.post("/api/chat/sessions", authMiddleware, postChatSession);
 router.get("/api/chat/sessions/:sessionId/messages", authMiddleware, getChatSessionMessages);
+router.patch("/api/chat/sessions/:sessionId", authMiddleware, patchChatSession);
+router.delete("/api/chat/sessions/:sessionId", authMiddleware, removeChatSession);
 router.post("/api/chat/message", authMiddleware, postChatMessage);
 
 // doctor-patient chat room routes

@@ -2,6 +2,8 @@ const {
   createChatSession,
   getChatSessions,
   getChatMessages,
+  renameChatSession,
+  deleteChatSession,
   handleChatMessage,
 } = require("../service/chatService");
 
@@ -74,6 +76,38 @@ const getChatSessionMessages = async (req, res) => {
   }
 };
 
+const patchChatSession = async (req, res) => {
+  try {
+    const patient = getPatientContext(req, res);
+    if (!patient) return;
+
+    const data = await renameChatSession(patient.patientId, req.params.sessionId, req.body?.title);
+    return res.status(200).json({ errCode: 0, errMessage: "OK", data });
+  } catch (error) {
+    console.log("patchChatSession error:", error);
+    return res.status(getErrorStatus(error)).json({
+      errCode: -1,
+      errMessage: error.message || "Error from server",
+    });
+  }
+};
+
+const removeChatSession = async (req, res) => {
+  try {
+    const patient = getPatientContext(req, res);
+    if (!patient) return;
+
+    await deleteChatSession(patient.patientId, req.params.sessionId);
+    return res.status(200).json({ errCode: 0, errMessage: "OK" });
+  } catch (error) {
+    console.log("removeChatSession error:", error);
+    return res.status(getErrorStatus(error)).json({
+      errCode: -1,
+      errMessage: error.message || "Error from server",
+    });
+  }
+};
+
 const postChatMessage = async (req, res) => {
   const sessionId = req.body?.session_id || req.body?.sessionId || null;
 
@@ -114,5 +148,7 @@ module.exports = {
   getChatSessionList,
   postChatSession,
   getChatSessionMessages,
+  patchChatSession,
+  removeChatSession,
   postChatMessage,
 };
