@@ -140,6 +140,36 @@ const getRevenueRange = (type) => {
     };
 };
 
+const getPreviousRevenueRange = (type) => {
+    const today = moment().startOf("day");
+    const revenueType = ["week", "month", "year"].includes(type) ? type : "month";
+
+    if (revenueType === "week") {
+        return {
+            type: revenueType,
+            startDate: today.clone().subtract(13, "days"),
+            endDate: today.clone().subtract(7, "days"),
+            unit: "day",
+        };
+    }
+
+    if (revenueType === "year") {
+        return {
+            type: revenueType,
+            startDate: today.clone().subtract(1, "years").startOf("year"),
+            endDate: today.clone().subtract(1, "years").endOf("year"),
+            unit: "month",
+        };
+    }
+
+    return {
+        type: revenueType,
+        startDate: today.clone().subtract(1, "months").startOf("month"),
+        endDate: today.clone().subtract(1, "months").endOf("month"),
+        unit: "day",
+    };
+};
+
 const getTopDoctorRange = (type) => {
     const today = moment().startOf("day");
     const topDoctorType = ["month", "quarter", "year"].includes(type) ? type : "month";
@@ -189,6 +219,7 @@ const buildEmptyRevenueData = (range) => {
 
 const getRevenueStatistics = async (revenueType, clinicId) => {
     const range = getRevenueRange(revenueType);
+    const prevRange = getPreviousRevenueRange(revenueType);
     const scope = getDashboardScope(clinicId);
     const chartData = buildEmptyRevenueData(range);
     const chartDataByKey = chartData.reduce((acc, item) => {
@@ -208,22 +239,63 @@ const getRevenueStatistics = async (revenueType, clinicId) => {
         WHERE ev.paymentStatusId = 'PS2'
           AND ev.examDate BETWEEN ? AND ?
         `,
-        [...scope.params, range.startDate.format("YYYY-MM-DD"), range.endDate.format("YYYY-MM-DD")]
+        [...scope.params, prevRange.startDate.format("YYYY-MM-DD"), range.endDate.format("YYYY-MM-DD")]
     );
 
-    rows.forEach((row) => {
-        const dateKey = range.unit === "month"
-            ? moment(row.date).format("YYYY-MM")
-            : moment(row.date).format("YYYY-MM-DD");
+    let previousTotal = 0;
+    const currentStartStr = range.startDate.format("YYYY-MM-DD");
+    const currentEndStr = range.endDate.format("YYYY-MM-DD");
+    const prevStartStr = prevRange.startDate.format("YYYY-MM-DD");
+    const prevEndStr = prevRange.endDate.format("YYYY-MM-DD");
 
-        if (chartDataByKey[dateKey]) {
-            chartDataByKey[dateKey].revenue += Number(row.priceAtBooking) || 0;
+    rows.forEach((row) => {
+        const rowDateStr = moment(row.date).format("YYYY-MM-DD");
+        const price = Number(row.priceAtBooking) || 0;
+
+        // check current range
+        if (rowDateStr >= currentStartStr && rowDateStr <= currentEndStr) {
+            const dateKey = range.unit === "month"
+                ? moment(row.date).format("YYYY-MM")
+                : moment(row.date).format("YYYY-MM-DD");
+
+            if (chartDataByKey[dateKey]) {
+                chartDataByKey[dateKey].revenue += price;
+            }
+        }
+
+        // check previous range
+        if (rowDateStr >= prevStartStr && rowDateStr <= prevEndStr) {
+            previousTotal += price;
         }
     });
 
+    const total = chartData.reduce((sum, item) => sum + item.revenue, 0);
+
+    // Calculate percentage and direction
+    let percentage = null;
+    let direction = "neutral";
+
+    if (previousTotal === 0) {
+        if (total === 0) {
+            percentage = 0;
+            direction = "neutral";
+        } else {
+            percentage = null;
+            direction = "new";
+        }
+    } else {
+        percentage = ((total - previousTotal) / previousTotal) * 100;
+        direction = percentage > 0 ? "up" : (percentage < 0 ? "down" : "neutral");
+    }
+
     return {
         type: range.type,
-        total: chartData.reduce((sum, item) => sum + item.revenue, 0),
+        total,
+        comparison: {
+            previousTotal,
+            percentage,
+            direction,
+        },
         chartData,
     };
 };

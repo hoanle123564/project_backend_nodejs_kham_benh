@@ -194,6 +194,7 @@ const {
   handleChangeStatusPost,
   handleUpdatePostOrder,
 } = require("../controller/postController");
+const { getPublicKeyStats } = require("../controller/publicStatsController");
 const router = express.Router();
 const {
   postOnlinePayment,
@@ -349,6 +350,7 @@ router.put("/api/edit-clinic-department", authMiddleware, handleEditClinicDepart
 router.put("/api/change-status-clinic-department", authMiddleware, handleChangeStatusClinicDepartment);
 
 // public post routes
+router.get("/api/public/key-stats", getPublicKeyStats);
 router.get("/api/public/post-categories", getPublicPostCategories);
 router.get("/api/public/post-category-detail", getPublicPostCategoryDetail);
 router.get("/api/public/posts-by-category", getPublicPostListByCategory);
