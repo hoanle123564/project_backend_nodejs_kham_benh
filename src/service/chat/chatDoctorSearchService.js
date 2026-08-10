@@ -18,6 +18,8 @@ const mapScheduleRowToChatSlot = (row, index) => {
   const startEnd = row.startTime && row.endTime
     ? { start_time: row.startTime.slice(0, 5), end_time: row.endTime.slice(0, 5) }
     : splitTimeRange(timeText);
+  const price = row.price === null || row.price === undefined ? null : Number(row.price);
+  const effectivePrice = Number(row.effectivePrice ?? price) || 0;
 
   return {
     index: index + 1,
@@ -29,6 +31,11 @@ const mapScheduleRowToChatSlot = (row, index) => {
     time: timeText,
     timeType: row.timeType,
     appointmentTypeId: row.appointmentTypeId,
+    price: Number.isInteger(price) && price > 0 ? price : null,
+    effectivePrice,
+    isActive: Number(row.isActive ?? 1) ? 1 : 0,
+    isBookable: Number(row.isBookable ?? 1) ? 1 : 0,
+    capacity: Number(row.capacity) || 1,
     bookedCount: Number(row.bookedCount) || 0,
     hasActiveBooking: Number(row.hasActiveBooking) ? 1 : 0,
     remaining: Number(row.remaining) || 0,
@@ -286,6 +293,7 @@ const findDoctorsFromCollectedInfo = async (collectedInfo = {}, debugStats = nul
 };
 
 module.exports = {
+  mapScheduleRowToChatSlot,
   getSpecialtyMatchInfo,
   buildScheduleDateFilter,
   getAvailableSlotsForDoctor,

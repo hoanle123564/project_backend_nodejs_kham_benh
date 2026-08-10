@@ -1,6 +1,7 @@
 const connection = require("../../config/data");
 const { analyzeMessage } = require("../fastApiAiService");
 const { bookAppointment } = require("../PatientService");
+const { cancelPaymentIntent, getPaymentIntent } = require("../paymentService");
 const {
   STATES,
   ACTIONABLE_INTENTS,
@@ -20,6 +21,7 @@ const {
   isValidPhone,
   normalizeEmail,
   isValidEmail,
+  formatMoney,
   isCancelMessage,
   isConfirmMessage,
   splitPatientName,
@@ -231,7 +233,7 @@ const formatDoctorsReply = (doctors) => {
       `   Chuyên khoa: ${doctor.specialty || "Chưa rõ"}`,
       `   Thành phố: ${doctor.city || "Chưa rõ"}`,
       `   Hình thức: ${doctor.supports_online ? "Có hỗ trợ online" : "Tại phòng khám"}`,
-      `   Giá khám: ${doctor.price || 0}`
+      `   Giá khám: ${formatMoney(doctor.price)}`
     );
   });
 
@@ -264,6 +266,7 @@ const formatConfirmReply = (session) => {
     `Ngày khám: ${slot.date || ""}`,
     `Giờ khám: ${slot.start_time || ""} - ${slot.end_time || ""}`,
     `Hình thức khám: ${consultationLabel}`,
+    `Giá khám: ${formatMoney(slot.effectivePrice || slot.price || doctor.price)}`,
     `Tên bệnh nhân: ${info.patientName || ""}`,
     `Số điện thoại: ${info.patientPhone || ""}`,
     `Email: ${info.patientEmail || ""}`,
@@ -271,6 +274,15 @@ const formatConfirmReply = (session) => {
     "Bạn xác nhận đặt lịch này không? Vui lòng trả lời có hoặc không.",
   ].join("\n");
 };
+
+const formatPaymentPendingReply = (payment) =>
+  [
+    "Bạn đã chọn lịch khám online.",
+    `Số tiền cần thanh toán: ${formatMoney(payment?.amount)}`,
+    `Nội dung chuyển khoản: ${payment?.paymentCode || ""}`,
+    "Vui lòng quét mã QR bên dưới để thanh toán.",
+    "Lịch hẹn chỉ được xác nhận sau khi hệ thống nhận thanh toán thành công.",
+  ].join("\n");
 
 const findDoctorsAndReply = async (session) => {
   const debugStats = {
@@ -507,6 +519,9 @@ const cancelSession = (session) => {
   session.collectedInfo.selectedSlot = null;
   session.selectedDoctorId = null;
   session.selectedScheduleId = null;
+  session.bookingId = null;
+  session.collectedInfo.payment = null;
+  session.collectedInfo.booking = null;
 
   return responseForSession(
     session,
@@ -531,7 +546,7 @@ const createBookingFromSession = async (session) => {
     date: slot.date,
     reason: info.reason || null,
     timeString: `${slot.start_time || ""} - ${slot.end_time || ""}`.trim(),
-  });
+  }, session.patientId);
 
   if (response.errCode !== 0) {
     return {
@@ -541,7 +556,24 @@ const createBookingFromSession = async (session) => {
     };
   }
 
+  const payment = getPaymentFromBookingResponse(response);
+  if (payment) {
+    return {
+      success: false,
+      paymentRequired: true,
+      payment,
+      raw: response,
+    };
+  }
+
   const bookingId = response.data?.insertId || response.data?.id || null;
+  if (!bookingId) {
+    return {
+      success: false,
+      message: "Online payment is required before the booking can be confirmed.",
+      raw: response,
+    };
+  }
   return {
     success: true,
     booking: {
@@ -551,6 +583,78 @@ const createBookingFromSession = async (session) => {
     },
     raw: response,
   };
+};
+
+const getPaymentFromBookingResponse = (response) =>
+  response?.errCode === 0 && response.data?.payment?.paymentId
+    ? response.data.payment
+    : null;
+
+const completePaidPayment = (session, payment) => {
+  const bookingId = payment?.bookingId || null;
+  session.bookingId = bookingId;
+  session.collectedInfo.payment = payment;
+  session.collectedInfo.booking = bookingId ? { id: bookingId } : null;
+  session.state = STATES.BOOKING_CREATED;
+  return responseForSession(
+    session,
+    `Thanh toán thành công. Mã lịch hẹn của bạn là ${bookingId}.`,
+    true,
+    { booking: session.collectedInfo.booking, payment }
+  );
+};
+
+const handleWaitPayment = async (session, message) => {
+  const paymentId = session.collectedInfo?.payment?.paymentId;
+  if (!paymentId) {
+    session.state = STATES.CONFIRM_BOOKING;
+    return responseForSession(session, formatConfirmReply(session));
+  }
+
+  const user = { id: session.patientId, roleId: "R3" };
+  if (isCancelMessage(message)) {
+    const cancelled = await cancelPaymentIntent({ paymentId, user });
+    if (cancelled.errCode !== 0) {
+      if (cancelled.data?.status === "PAID" && cancelled.data?.bookingId) {
+        return completePaidPayment(session, cancelled.data);
+      }
+      return responseForSession(
+        session,
+        cancelled.errMessage || "Không thể hủy yêu cầu thanh toán.",
+        false,
+        { payment: cancelled.data || session.collectedInfo.payment }
+      );
+    }
+    return cancelSession(session);
+  }
+
+  const current = await getPaymentIntent(paymentId, user);
+  if (current.errCode !== 0) {
+    return responseForSession(session, current.errMessage || "Không thể kiểm tra thanh toán.", false);
+  }
+
+  const payment = current.data;
+  session.collectedInfo.payment = payment;
+  if (payment.status === "PAID" && payment.bookingId) {
+    return completePaidPayment(session, payment);
+  }
+
+  if (["EXPIRED", "FAILED", "REFUNDED"].includes(payment.status)) {
+    session.state = STATES.CONFIRM_BOOKING;
+    return responseForSession(
+      session,
+      "Mã thanh toán đã hết hiệu lực. Bạn có muốn tạo lại yêu cầu thanh toán không?",
+      true,
+      { payment }
+    );
+  }
+
+  return responseForSession(
+    session,
+    "Tôi chưa nhận được thanh toán. Vui lòng quét mã QR và thử kiểm tra lại sau ít phút.",
+    true,
+    { payment }
+  );
 };
 
 const handleConfirmBooking = async (session, message, aiResult = null) => {
@@ -580,6 +684,19 @@ const handleConfirmBooking = async (session, message, aiResult = null) => {
       `Đặt lịch thành công. Mã lịch hẹn của bạn là ${result.booking.id}.`,
       true,
       { booking: result.booking }
+    );
+  }
+
+  if (result.paymentRequired) {
+    session.bookingId = null;
+    session.collectedInfo.booking = null;
+    session.collectedInfo.payment = result.payment;
+    session.state = STATES.WAIT_PAYMENT;
+    return responseForSession(
+      session,
+      formatPaymentPendingReply(result.payment),
+      true,
+      { payment: result.payment, payment_required: true }
     );
   }
 
@@ -640,6 +757,8 @@ const dispatchByState = async (session, message, aiResult = null) => {
       return handleAskPatientEmail(session, message);
     case STATES.CONFIRM_BOOKING:
       return handleConfirmBooking(session, message, aiResult);
+    case STATES.WAIT_PAYMENT:
+      return handleWaitPayment(session, message);
     default:
       session.state = STATES.START;
       return handleStart(session, message, aiResult);
@@ -665,11 +784,12 @@ const handleChatMessage = async ({ sessionId, message, patientId, patientEmail }
     }
     await saveChatMessage(session, "user", trimmedMessage);
 
-    const aiResult = await analyzeMessage(trimmedMessage);
-    session.lastAiResult = aiResult.raw;
+    const aiResult =
+      session.state === STATES.WAIT_PAYMENT ? null : await analyzeMessage(trimmedMessage);
+    if (aiResult) session.lastAiResult = aiResult.raw;
     const response = shouldBlockEmergency(trimmedMessage, aiResult)
       ? emergencyResponse(session, aiResult)
-      : isCancelMessage(trimmedMessage)
+      : isCancelMessage(trimmedMessage) && session.state !== STATES.WAIT_PAYMENT
         ? cancelSession(session)
         : await dispatchByState(session, trimmedMessage, aiResult);
 
@@ -709,6 +829,10 @@ module.exports = {
   formatDoctorsReply,
   formatSlotsReply,
   formatConfirmReply,
+  formatPaymentPendingReply,
+  getPaymentFromBookingResponse,
+  completePaidPayment,
+  handleWaitPayment,
   findDoctorsAndReply,
   continueAfterRequiredInfo,
   handleStart,

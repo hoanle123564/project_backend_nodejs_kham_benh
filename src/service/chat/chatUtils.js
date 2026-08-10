@@ -137,6 +137,13 @@ const parseMoney = (value) => {
   return digits ? Number(digits) : 0;
 };
 
+const formatMoney = (value) => {
+  const amount = Number(value);
+  return Number.isInteger(amount) && amount > 0
+    ? `${new Intl.NumberFormat("vi-VN").format(amount)}đ`
+    : "Chưa xác định";
+};
+
 const buildDoctorName = (doctor) => {
   const fullName = `${doctor.firstName || ""} ${doctor.lastName || ""}`.trim();
   const position = String(doctor.positionVi || "").trim();
@@ -204,6 +211,7 @@ module.exports = {
   formatDate,
   splitTimeRange,
   parseMoney,
+  formatMoney,
   buildDoctorName,
   parseSelectionNumber,
   normalizePhone,
