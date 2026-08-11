@@ -270,7 +270,7 @@ const sendAppointmentReminderEmail = async (dataSend = {}) => {
           <p style="margin:6px 0;"><b>Bac si:</b> ${escapeHtml(dataSend.doctorName || "")}</p>
           <p style="margin:6px 0;"><b>Phong kham:</b> ${escapeHtml(dataSend.clinicName || "")}</p>
         </div>
-        <p>Vui long san sang va den dung gio hen.</p>
+        <p>Vui lòng đến đúng hẹn.</p>
       </div>
     `,
   };
