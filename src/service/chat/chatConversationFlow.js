@@ -1,6 +1,6 @@
 const connection = require("../../config/data");
 const { analyzeMessage } = require("../fastApiAiService");
-const { bookAppointment } = require("../PatientService");
+const { bookAppointment, cancelBookAppointment } = require("../PatientService");
 const { cancelPaymentIntent, getPaymentIntent } = require("../paymentService");
 const {
   STATES,
@@ -53,6 +53,18 @@ const EMERGENCY_PHRASES = [
   "soc phan ve",
   "sung moi kho tho",
 ];
+const DRAFT_CANCELLATION_STATES = new Set([
+  STATES.ASK_LOCATION,
+  STATES.ASK_CONSULTATION_TYPE,
+  STATES.WAIT_SELECT_DOCTOR,
+  STATES.WAIT_SELECT_SLOT,
+  STATES.ASK_PATIENT_NAME,
+  STATES.ASK_PATIENT_PHONE,
+  STATES.ASK_PATIENT_EMAIL,
+  STATES.CONFIRM_BOOKING,
+]);
+const BOOKING_ID_REPLY =
+  "Bạn muốn hủy lịch khám nào? Vui lòng gửi mã booking, ví dụ: 123.";
 
 const responseForSession = (session, reply, success = true, extraData = {}) => {
   const info = session.collectedInfo || defaultCollectedInfo();
@@ -87,6 +99,25 @@ const hasEmergencyPhrase = (message) => {
   const normalizedMessage = normalizeText(message);
   return EMERGENCY_PHRASES.some((phrase) => normalizedMessage.includes(phrase));
 };
+
+const normalizeBookingId = (value) => {
+  const bookingId = Number(value);
+  return Number.isInteger(bookingId) && bookingId > 0 ? bookingId : null;
+};
+
+const parseBookingId = (message) => {
+  const matches = String(message || "").match(/\b\d+\b/g) || [];
+  return matches.length === 1 ? normalizeBookingId(matches[0]) : null;
+};
+
+const getSessionBookingId = (session) =>
+  [
+    session.bookingId,
+    session.collectedInfo?.booking?.id,
+    session.collectedInfo?.payment?.bookingId,
+  ]
+    .map(normalizeBookingId)
+    .find(Boolean) || null;
 
 const hasEmergencyDecision = (aiResult) =>
   typeof aiResult?.normalized?.urgent === "boolean" ||
@@ -511,7 +542,11 @@ const handleAskPatientEmail = async (session, message) => {
   return advanceToPatientInfoOrConfirm(session);
 };
 
-const cancelSession = (session) => {
+const cancelSession = (
+  session,
+  reply = "Lịch đặt đã được hủy. Khi cần đặt lịch mới, bạn có thể gửi triệu chứng cho tôi.",
+  extraData = {}
+) => {
   session.state = STATES.CANCELLED;
   session.collectedInfo.doctors = [];
   session.collectedInfo.slots = [];
@@ -523,10 +558,61 @@ const cancelSession = (session) => {
   session.collectedInfo.payment = null;
   session.collectedInfo.booking = null;
 
-  return responseForSession(
+  return responseForSession(session, reply, true, extraData);
+};
+
+const cancelBookingFromSession = async (session, bookingId) => {
+  const normalizedBookingId = normalizeBookingId(bookingId);
+  if (!normalizedBookingId) {
+    session.state = STATES.ASK_BOOKING_ID;
+    return responseForSession(session, BOOKING_ID_REPLY);
+  }
+
+  const response = await cancelBookAppointment({
+    BookingId: normalizedBookingId,
+    patientId: session.patientId,
+  });
+
+  if (response.errCode !== 0) {
+    return responseForSession(
+      session,
+      response.errMessage || "Không thể hủy lịch hẹn này.",
+      false,
+      { cancellation: { bookingId: normalizedBookingId, ...(response.data || {}) } }
+    );
+  }
+
+  const cancelledBooking = {
+    id: response.data?.bookingId || normalizedBookingId,
+    statusId: response.data?.statusId || "S4",
+    statusVi: response.data?.statusVi || null,
+    statusEn: response.data?.statusEn || null,
+  };
+  return cancelSession(
     session,
-    "Lịch đặt đã được hủy. Khi cần đặt lịch mới, bạn có thể gửi triệu chứng cho tôi."
+    `Lịch hẹn ${cancelledBooking.id} đã được hủy thành công. Khi cần đặt lịch mới, bạn có thể gửi triệu chứng cho tôi.`,
+    { booking: cancelledBooking, cancellation: response.data || cancelledBooking }
   );
+};
+
+const handleCancelRequest = async (session, message) => {
+  const bookingId = parseBookingId(message) || getSessionBookingId(session);
+  if (!bookingId) {
+    session.state = STATES.ASK_BOOKING_ID;
+    return responseForSession(session, BOOKING_ID_REPLY);
+  }
+
+  return cancelBookingFromSession(session, bookingId);
+};
+
+const handleAskBookingId = async (session, message) => {
+  const bookingId = parseBookingId(message);
+  if (!bookingId) {
+    session.state = STATES.ASK_BOOKING_ID;
+    return responseForSession(session, BOOKING_ID_REPLY);
+  }
+
+  return cancelBookingFromSession(session, bookingId);
 };
 
 const createBookingFromSession = async (session) => {
@@ -607,16 +693,32 @@ const completePaidPayment = (session, payment) => {
 const handleWaitPayment = async (session, message) => {
   const paymentId = session.collectedInfo?.payment?.paymentId;
   if (!paymentId) {
+    if (isCancelMessage(message)) {
+      return handleCancelRequest(session, message);
+    }
     session.state = STATES.CONFIRM_BOOKING;
     return responseForSession(session, formatConfirmReply(session));
   }
 
   const user = { id: session.patientId, roleId: "R3" };
   if (isCancelMessage(message)) {
+    const requestedBookingId = parseBookingId(message) || getSessionBookingId(session);
+    if (requestedBookingId) {
+      return cancelBookingFromSession(session, requestedBookingId);
+    }
+
+    const current = await getPaymentIntent(paymentId, user);
+    if (current.errCode === 0) {
+      session.collectedInfo.payment = current.data;
+      if (current.data?.bookingId) {
+        return cancelBookingFromSession(session, current.data.bookingId);
+      }
+    }
+
     const cancelled = await cancelPaymentIntent({ paymentId, user });
     if (cancelled.errCode !== 0) {
-      if (cancelled.data?.status === "PAID" && cancelled.data?.bookingId) {
-        return completePaidPayment(session, cancelled.data);
+      if (cancelled.data?.bookingId) {
+        return cancelBookingFromSession(session, cancelled.data.bookingId);
       }
       return responseForSession(
         session,
@@ -625,7 +727,10 @@ const handleWaitPayment = async (session, message) => {
         { payment: cancelled.data || session.collectedInfo.payment }
       );
     }
-    return cancelSession(session);
+    return cancelSession(
+      session,
+      "Yêu cầu thanh toán đã được hủy. Khi cần đặt lịch mới, bạn có thể gửi triệu chứng cho tôi."
+    );
   }
 
   const current = await getPaymentIntent(paymentId, user);
@@ -657,13 +762,31 @@ const handleWaitPayment = async (session, message) => {
   );
 };
 
+const handleCancellationMessage = async (session, message) => {
+  if (session.state === STATES.WAIT_PAYMENT) {
+    return handleWaitPayment(session, message);
+  }
+
+  if (DRAFT_CANCELLATION_STATES.has(session.state) && !getSessionBookingId(session)) {
+    return cancelSession(
+      session,
+      "Yêu cầu đặt lịch đã được hủy. Khi cần đặt lịch mới, bạn có thể gửi triệu chứng cho tôi."
+    );
+  }
+
+  return handleCancelRequest(session, message);
+};
+
 const handleConfirmBooking = async (session, message, aiResult = null) => {
   if (shouldBlockEmergency(message, aiResult)) {
     return emergencyResponse(session, aiResult);
   }
 
   if (isCancelMessage(message)) {
-    return cancelSession(session);
+    return cancelSession(
+      session,
+      "Yêu cầu đặt lịch đã được hủy. Khi cần đặt lịch mới, bạn có thể gửi triệu chứng cho tôi."
+    );
   }
 
   if (!isConfirmMessage(message)) {
@@ -755,6 +878,8 @@ const dispatchByState = async (session, message, aiResult = null) => {
       return handleAskPatientPhone(session, message);
     case STATES.ASK_PATIENT_EMAIL:
       return handleAskPatientEmail(session, message);
+    case STATES.ASK_BOOKING_ID:
+      return handleAskBookingId(session, message);
     case STATES.CONFIRM_BOOKING:
       return handleConfirmBooking(session, message, aiResult);
     case STATES.WAIT_PAYMENT:
@@ -785,12 +910,16 @@ const handleChatMessage = async ({ sessionId, message, patientId, patientEmail }
     await saveChatMessage(session, "user", trimmedMessage);
 
     const aiResult =
-      session.state === STATES.WAIT_PAYMENT ? null : await analyzeMessage(trimmedMessage);
+      session.state === STATES.WAIT_PAYMENT ||
+      session.state === STATES.ASK_BOOKING_ID ||
+      isCancelMessage(trimmedMessage)
+        ? null
+        : await analyzeMessage(trimmedMessage);
     if (aiResult) session.lastAiResult = aiResult.raw;
     const response = shouldBlockEmergency(trimmedMessage, aiResult)
       ? emergencyResponse(session, aiResult)
-      : isCancelMessage(trimmedMessage) && session.state !== STATES.WAIT_PAYMENT
-        ? cancelSession(session)
+      : isCancelMessage(trimmedMessage)
+        ? await handleCancellationMessage(session, trimmedMessage)
         : await dispatchByState(session, trimmedMessage, aiResult);
 
     await saveSession(session);
@@ -830,9 +959,15 @@ module.exports = {
   formatSlotsReply,
   formatConfirmReply,
   formatPaymentPendingReply,
+  parseBookingId,
+  getSessionBookingId,
   getPaymentFromBookingResponse,
   completePaidPayment,
   handleWaitPayment,
+  cancelBookingFromSession,
+  handleCancelRequest,
+  handleAskBookingId,
+  handleCancellationMessage,
   findDoctorsAndReply,
   continueAfterRequiredInfo,
   handleStart,
