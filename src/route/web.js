@@ -201,9 +201,21 @@ const {
   getPayment,
   getPaymentIntentApi,
   cancelPaymentIntentApi,
-  getAdminRefunds,
   postConfirmRefund,
 } = require("../controller/paymentController");
+const {
+  getAdminRefunds,
+  getClinicManagerRefunds,
+  getPatientRefund,
+  getPatientRefunds,
+  postAdminApproveRefund,
+  postAdminRejectRefund,
+  postAdminSyncRefund,
+  postClinicManagerApproveRefund,
+  postClinicManagerRejectRefund,
+  postClinicManagerSyncRefund,
+  postPatientRefund,
+} = require("../controller/refundController");
 const optionalAuthMiddleware = (req, res, next) =>
   req.headers.authorization ? authMiddleware(req, res, next) : next();
 
@@ -222,6 +234,9 @@ router.get("/api/admin/bookings", authMiddleware, adminMiddleware, getAdminBooki
 router.patch("/api/admin/bookings/:bookingId/status", authMiddleware, adminMiddleware, patchAdminBookingStatus);
 router.get("/api/admin/refunds", authMiddleware, adminMiddleware, getAdminRefunds);
 router.post("/api/admin/refunds/:refundId/confirm", authMiddleware, adminMiddleware, postConfirmRefund);
+router.post("/api/admin/refunds/:refundId/approve", authMiddleware, adminMiddleware, postAdminApproveRefund);
+router.post("/api/admin/refunds/:refundId/reject", authMiddleware, adminMiddleware, postAdminRejectRefund);
+router.post("/api/admin/refunds/:refundId/sync", authMiddleware, adminMiddleware, postAdminSyncRefund);
 router.get("/api/admin/reviews", authMiddleware, adminMiddleware, getAdminReviewList);
 router.patch("/api/admin/reviews/:reviewId/visibility", authMiddleware, adminMiddleware, patchAdminReviewVisibility);
 
@@ -249,6 +264,10 @@ router.get("/api/doctor/dashboard-statistics", authMiddleware, getDoctorDashboar
 router.get("/api/doctor/bookings", authMiddleware, getDoctorBookings);
 router.patch("/api/doctor/bookings/:bookingId/status", authMiddleware, patchDoctorBookingStatus);
 router.get("/api/clinic-manager/dashboard-statistics", authMiddleware, getClinicManagerDashboard);
+router.get("/api/clinic-manager/refunds", authMiddleware, getClinicManagerRefunds);
+router.post("/api/clinic-manager/refunds/:refundId/approve", authMiddleware, postClinicManagerApproveRefund);
+router.post("/api/clinic-manager/refunds/:refundId/reject", authMiddleware, postClinicManagerRejectRefund);
+router.post("/api/clinic-manager/refunds/:refundId/sync", authMiddleware, postClinicManagerSyncRefund);
 router.post("/api/clinic-manager/doctors", authMiddleware, postClinicManagerDoctor);
 router.put("/api/clinic-manager/doctors/:doctorId", authMiddleware, putClinicManagerDoctor);
 router.patch("/api/clinic-manager/doctors/:doctorId/status", authMiddleware, patchClinicManagerDoctorStatus);
@@ -290,6 +309,9 @@ router.get("/api/clinic-manager/patients/:patientId", authMiddleware, getClinicM
 router.put("/api/clinic-manager/patients/:patientId", authMiddleware, putClinicManagerPatient);
 router.get("/api/patient/profile", authMiddleware, getPatientProfileAPI);
 router.put("/api/patient/profile", authMiddleware, updatePatientProfileAPI);
+router.post("/api/patient/refunds", authMiddleware, postPatientRefund);
+router.get("/api/patient/refunds", authMiddleware, getPatientRefunds);
+router.get("/api/patient/refunds/:refundId", authMiddleware, getPatientRefund);
 router.get("/api/patient/notifications", authMiddleware, getMyPatientNotifications);
 router.patch("/api/patient/notifications/read", authMiddleware, markMyPatientNotificationsRead);
 router.patch("/api/patient/notifications/:notificationId/read", authMiddleware, markMyPatientNotificationsRead);

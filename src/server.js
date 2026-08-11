@@ -6,6 +6,7 @@ const initWebRoute = require('../src/route/web')
 const { initChatSocket } = require('../src/socket/chatSocket')
 const { startAppointmentReminderScheduler } = require('../src/service/appointmentReminderService')
 const { startPaymentExpiryScheduler, validatePaymentConfig } = require('../src/service/paymentService')
+const { startPayosRefundScheduler } = require('../src/service/refundService')
 const { postSePayWebhook } = require('../src/controller/paymentController')
 const cors = require('cors')
 require('dotenv').config()
@@ -80,4 +81,5 @@ server.listen(port, () => {
     console.log('Backend nodejs is running on port: ' + port);
     startAppointmentReminderScheduler()
     startPaymentExpiryScheduler()
+    startPayosRefundScheduler()
 })

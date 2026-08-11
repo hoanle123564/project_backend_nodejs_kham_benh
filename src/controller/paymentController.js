@@ -50,16 +50,15 @@ const postSePayWebhook = async (req, res) => {
 };
 const getAdminRefunds = async (_req, res) =>
   res.status(200).json(await listRefunds());
-const postConfirmRefund = async (req, res) =>
-  res
-    .status(200)
-    .json(
-      await confirmManualRefund({
-        refundId: req.params.refundId,
-        refundTransactionId: req.body?.refundTransactionId,
-        actor: req.user,
-      }),
-    );
+const postConfirmRefund = async (req, res) => {
+  const payload = await confirmManualRefund({
+    refundId: req.params.refundId,
+    refundTransactionId: req.body?.refundTransactionId,
+    actor: req.user,
+  });
+  const { httpStatus, ...body } = payload;
+  return res.status(httpStatus || 200).json(body);
+};
 
 module.exports = {
   getAdminRefunds,

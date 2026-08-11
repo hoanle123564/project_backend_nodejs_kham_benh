@@ -7,7 +7,7 @@ const { isScheduleStarted, normalizeDate } = require("./doctor/doctorSchedulePol
 const { assignBookingQueueNumberInCurrentTransaction } = require("./bookingQueueService");
 
 const PAYMENT_STATUS = Object.freeze({ PENDING: "PPS1", PAID_PENDING_DOCTOR: "PPS2", COMPLETED: "PPS3", EXPIRED: "PPS4", MANUAL_REVIEW: "PPS5", REFUND_PENDING: "PPS6", REFUNDED: "PPS7", REFUND_FAILED: "PPS8" });
-const REFUND_STATUS = Object.freeze({ PENDING: "RFS1", PROCESSING: "RFS2", REFUNDED: "RFS3", FAILED: "RFS4" });
+const REFUND_STATUS = Object.freeze({ PENDING: "RFS1", PROCESSING: "RFS2", REFUNDED: "RFS3", FAILED: "RFS4", APPROVED: "RFS5", REJECTED: "RFS6" });
 const PROVIDER = "SEPAY";
 const PAYMENT_METHOD = "PAY2";
 const PAYMENT_CURRENCY = "VND";
@@ -262,6 +262,12 @@ const confirmManualRefund = async ({ refundId, refundTransactionId, actor }) => 
       const [refunds] = await db.query("SELECT * FROM payment_refunds WHERE id = ? LIMIT 1 FOR UPDATE", [refundId]);
       const refund = refunds[0];
       if (!refund) return null;
+      if (refund.refundMode !== "MANUAL") {
+        const error = new Error("Manual refund action is not available for this refund");
+        error.errCode = 2;
+        error.httpStatus = 409;
+        throw error;
+      }
       if (refund.statusId !== REFUND_STATUS.PENDING) { const error = new Error("Refund is already processed"); error.errCode = 2; throw error; }
       if (!refund.receiverBank || !refund.receiverAccountName || !refund.receiverAccountNumber) { const error = new Error("Patient refund account is incomplete"); error.errCode = 2; throw error; }
       await db.query("UPDATE payment_refunds SET statusId = ?, refundTransactionId = ?, processedBy = ?, refundedAt = CURRENT_TIMESTAMP WHERE id = ?", [REFUND_STATUS.REFUNDED, transactionId, actor.id, refund.id]);
@@ -269,7 +275,7 @@ const confirmManualRefund = async ({ refundId, refundTransactionId, actor }) => 
       return { id: refund.id };
     });
     return data ? { errCode: 0, errMessage: "Refund confirmed", data } : { errCode: 404, errMessage: "Refund not found" };
-  } catch (error) { return { errCode: error.errCode || 1, errMessage: error.message }; }
+  } catch (error) { return { errCode: error.errCode || 1, errMessage: error.message, ...(error.httpStatus ? { httpStatus: error.httpStatus } : {}) }; }
 };
 const expirePendingPayments = async () => withTransaction(async (db) => {
   const config = getPaymentConfig();
