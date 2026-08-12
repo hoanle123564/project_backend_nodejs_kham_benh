@@ -78,3 +78,35 @@ test("patient refund endpoint preserves 201 envelope and rejects non-patients", 
   await controller.getPatientRefunds({ user: { id: 1, roleId: "R1" } }, forbidden);
   assert.equal(forbidden.statusCode, 403);
 });
+
+test("patient manual refund patch derives booking id from the route", { concurrency: false }, async () => {
+  let received = null;
+  const controller = loadController({
+    "../service/refundService": {
+      updatePatientManualRefund: async (options) => {
+        received = options;
+        return { errCode: 0, errMessage: "updated", data: {}, httpStatus: 200 };
+      },
+    },
+    "../service/clinicAccessService": {
+      CONFLICT_RESPONSE: { errCode: 409, errMessage: "scope conflict" },
+      FORBIDDEN_RESPONSE: { errCode: 403, errMessage: "forbidden" },
+      getR4ClinicScope: async () => ({ errCode: 0, errMessage: "OK", clinicId: 42 }),
+    },
+  });
+
+  const res = response();
+  await controller.patchPatientManualRefund({
+    user: { id: 3, roleId: "R3" },
+    params: { bookingId: "12" },
+    body: { bankBin: "970415", reason: null },
+  }, res);
+
+  assert.equal(res.statusCode, 200);
+  assert.deepEqual(received, {
+    user: { id: 3, roleId: "R3" },
+    bookingId: "12",
+    body: { bankBin: "970415", reason: null },
+  });
+  assert.equal(Object.prototype.hasOwnProperty.call(res.body, "httpStatus"), false);
+});

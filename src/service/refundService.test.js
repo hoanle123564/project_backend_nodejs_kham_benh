@@ -39,6 +39,12 @@ test("patient refund validation accepts only the public allow-list", () => {
   assert.equal(validation.value.reason, "Patient cancellation");
 });
 
+test("patient refund validation accepts an empty optional reason", () => {
+  const validation = validatePatientRefundRequest({ ...validRequest, reason: "   " });
+  assert.equal(validation.valid, true);
+  assert.equal(validation.value.reason, null);
+});
+
 test("patient refund validation rejects protected and unknown fields", () => {
   const validation = validatePatientRefundRequest({ ...validRequest, amount: 1, refundMode: "MANUAL", patientId: 9, statusId: "RFS3" });
   assert.equal(validation.valid, false);

@@ -214,6 +214,7 @@ const {
   postClinicManagerApproveRefund,
   postClinicManagerRejectRefund,
   postClinicManagerSyncRefund,
+  patchPatientManualRefund,
   postPatientRefund,
 } = require("../controller/refundController");
 const optionalAuthMiddleware = (req, res, next) =>
@@ -310,6 +311,7 @@ router.put("/api/clinic-manager/patients/:patientId", authMiddleware, putClinicM
 router.get("/api/patient/profile", authMiddleware, getPatientProfileAPI);
 router.put("/api/patient/profile", authMiddleware, updatePatientProfileAPI);
 router.post("/api/patient/refunds", authMiddleware, postPatientRefund);
+router.patch("/api/patient/refunds/by-booking/:bookingId", authMiddleware, patchPatientManualRefund);
 router.get("/api/patient/refunds", authMiddleware, getPatientRefunds);
 router.get("/api/patient/refunds/:refundId", authMiddleware, getPatientRefund);
 router.get("/api/patient/notifications", authMiddleware, getMyPatientNotifications);

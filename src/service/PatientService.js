@@ -455,6 +455,9 @@ const ListBookingForPatient = async (patientId) => {
           b.paymentMethodId,
           p.paymentCode,
           p.paidAt,
+          r.id AS refundId,
+          r.statusId AS refundStatusId,
+          r.refundMode,
           paymentStatus.value_vi AS paymentStatusVi,
           paymentStatus.value_en AS paymentStatusEn,
           bq.queueNumber,
@@ -515,6 +518,8 @@ const ListBookingForPatient = async (patientId) => {
           ON ar.bookingId = b.id
         LEFT JOIN appointment_payments p
           ON p.bookingId = b.id
+        LEFT JOIN payment_refunds r
+          ON r.paymentId = p.id
         LEFT JOIN lookup paymentStatus
           ON p.statusId = paymentStatus.keyMap
          AND paymentStatus.type = 'PAYMENT_TRANSACTION_STATUS'

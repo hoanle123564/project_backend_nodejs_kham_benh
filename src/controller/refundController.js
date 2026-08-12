@@ -5,6 +5,7 @@ const {
   listPatientRefunds,
   rejectPayosRefund,
   syncPayosRefund,
+  updatePatientManualRefund,
 } = require("../service/refundService");
 const {
   CONFLICT_RESPONSE,
@@ -19,6 +20,7 @@ const send = (res, response, fallbackStatus = 200) => {
 };
 
 const postPatientRefund = async (req, res) => send(res, await createPatientRefund({ user: req.user, body: req.body }));
+const patchPatientManualRefund = async (req, res) => send(res, await updatePatientManualRefund({ user: req.user, bookingId: req.params.bookingId, body: req.body }));
 const getPatientRefunds = async (req, res) => {
   if (req.user?.roleId !== "R3") return send(res, { errCode: 403, errMessage: "Permission denied" });
   return send(res, await listPatientRefunds(req.user.id));
@@ -68,5 +70,6 @@ module.exports = {
   postClinicManagerApproveRefund,
   postClinicManagerRejectRefund,
   postClinicManagerSyncRefund,
+  patchPatientManualRefund,
   postPatientRefund,
 };

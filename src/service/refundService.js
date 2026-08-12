@@ -19,6 +19,7 @@ const PAYOS_MODE = "PAYOS";
 const PAYOS_TERMINAL_FAILURES = new Set(["FAILED", "REJECTED", "CANCELLED", "DECLINED"]);
 const PAYOS_TRANSPORT_ERRORS = new Set(["PAYOS_TIMEOUT", "ECONNRESET", "ETIMEDOUT", "ENOTFOUND", "EAI_AGAIN", "ECONNREFUSED", "EHOSTUNREACH", "ENETUNREACH", "ECONNABORTED", "EPIPE", "EPROTO", "EACCES"]);
 const PATIENT_REFUND_FIELDS = new Set(["bookingId", "bankBin", "bankName", "bankAccountNumber", "bankAccountName", "reason"]);
+const PATIENT_REFUND_UPDATE_FIELDS = new Set(["bankBin", "bankName", "bankAccountNumber", "bankAccountName", "reason"]);
 
 const normalizePositiveId = (value) => {
   if (typeof value === "boolean" || value === null || value === undefined || String(value).trim() === "") return null;
@@ -54,18 +55,15 @@ const providerOutcomeMessage = (outcome, fallback) => outcome?.providerMessage
   ? `PayOS: ${outcome.providerMessage}`
   : fallback;
 
-const validatePatientRefundRequest = (body = {}) => {
+const validatePatientRefundDetails = (body = {}, allowedFields) => {
   const errors = [];
   if (!body || typeof body !== "object" || Array.isArray(body)) {
     return { valid: false, errors: ["Request body must be an object"] };
   }
 
   Object.keys(body).forEach((key) => {
-    if (!PATIENT_REFUND_FIELDS.has(key)) errors.push(`Unsupported field: ${key}`);
+    if (!allowedFields.has(key)) errors.push(`Unsupported field: ${key}`);
   });
-
-  const bookingId = normalizePositiveId(body.bookingId);
-  if (!bookingId) errors.push("bookingId must be a positive integer");
 
   const requiredStrings = [
     ["bankBin", /^\d{6,10}$/, "bankBin must contain 6 to 10 digits"],
@@ -73,7 +71,7 @@ const validatePatientRefundRequest = (body = {}) => {
     ["bankAccountNumber", null, "bankAccountNumber is required"],
     ["bankAccountName", null, "bankAccountName is required"],
   ];
-  const values = { bookingId };
+  const values = {};
   requiredStrings.forEach(([field, pattern, missingMessage]) => {
     const value = typeof body[field] === "string" ? body[field].trim() : "";
     if (!value) errors.push(missingMessage);
@@ -93,6 +91,20 @@ const validatePatientRefundRequest = (body = {}) => {
 
   return { valid: errors.length === 0, errors, value: values };
 };
+
+const validatePatientRefundRequest = (body = {}) => {
+  const validation = validatePatientRefundDetails(body, PATIENT_REFUND_FIELDS);
+  if (!validation.value) return validation;
+
+  const bookingId = normalizePositiveId(body.bookingId);
+  if (!bookingId) validation.errors.push("bookingId must be a positive integer");
+  validation.value.bookingId = bookingId;
+  validation.valid = validation.errors.length === 0;
+  return validation;
+};
+
+const validatePatientManualRefundUpdateRequest = (body = {}) =>
+  validatePatientRefundDetails(body, PATIENT_REFUND_UPDATE_FIELDS);
 
 const REFUND_DETAIL_SELECT = `
   SELECT
@@ -190,6 +202,70 @@ const createPatientRefund = async ({ user, body }) => {
   } catch (error) {
     if (error?.code === "ER_DUP_ENTRY") return result(2, "A refund request already exists for this payment", undefined, 409);
     return result(1, error.message || "Unable to create refund request");
+  }
+};
+
+const updatePatientManualRefund = async ({ user, bookingId, body }) => {
+  if (user?.roleId !== "R3") return result(403, "Permission denied", undefined, 403);
+
+  const normalizedBookingId = normalizePositiveId(bookingId);
+  if (!normalizedBookingId) return result(1, "bookingId must be a positive integer", undefined, 422);
+
+  const validation = validatePatientManualRefundUpdateRequest(body);
+  if (!validation.valid) return result(1, validation.errors.join("; "), undefined, 422);
+
+  const { bankBin, bankName, bankAccountNumber, bankAccountName, reason } = validation.value;
+  try {
+    const refundId = await withTransaction(async (db) => {
+      const [bookings] = await db.query(
+        `SELECT b.id, b.patientId, b.statusId, s.appointmentTypeId
+         FROM booking b
+         INNER JOIN schedule s ON s.id = b.scheduleId
+         WHERE b.id = ? AND b.patientId = ?
+         LIMIT 1 FOR UPDATE`,
+        [normalizedBookingId, user.id],
+      );
+      const booking = bookings[0];
+      if (!booking) return { notFound: true };
+      if (booking.statusId !== "S6" || booking.appointmentTypeId !== "AT2") {
+        return { conflict: "Refund account update requires a doctor-rejected online booking" };
+      }
+
+      const [payments] = await db.query(
+        "SELECT * FROM appointment_payments WHERE bookingId = ? LIMIT 1 FOR UPDATE",
+        [booking.id],
+      );
+      const payment = payments[0];
+      if (!payment || payment.statusId !== PAYMENT_STATUS.REFUND_PENDING) {
+        return { conflict: "Payment is not awaiting a manual refund" };
+      }
+
+      const [refunds] = await db.query(
+        "SELECT * FROM payment_refunds WHERE paymentId = ? AND bookingId = ? LIMIT 1 FOR UPDATE",
+        [payment.id, booking.id],
+      );
+      const refund = refunds[0];
+      if (!refund) return { conflict: "Manual refund record not found" };
+      if (refund.refundMode !== "MANUAL" || refund.statusId !== REFUND_STATUS.PENDING) {
+        return { conflict: "Manual refund is no longer editable" };
+      }
+
+      const update = await db.query(
+        `UPDATE payment_refunds
+         SET receiverBankBin = ?, receiverBank = ?, receiverAccountNumber = ?, receiverAccountName = ?, reason = ?
+         WHERE id = ? AND refundMode = ? AND statusId = ?`,
+        [bankBin, bankName, bankAccountNumber, bankAccountName, reason, refund.id, "MANUAL", REFUND_STATUS.PENDING],
+      );
+      if (!update[0]?.affectedRows) return { conflict: "Manual refund is no longer editable" };
+      return { id: refund.id };
+    });
+
+    if (refundId?.notFound) return result(404, "Booking not found", undefined, 404);
+    if (refundId?.conflict) return result(2, refundId.conflict, undefined, 409);
+    const data = await readRefundRow(refundId.id);
+    return result(0, "Refund account updated", data);
+  } catch (error) {
+    return result(1, error.message || "Unable to update refund account");
   }
 };
 
@@ -591,6 +667,7 @@ module.exports = {
   PAYOS_TRANSPORT_ERRORS,
   PAYOS_TERMINAL_FAILURES,
   PATIENT_REFUND_FIELDS,
+  PATIENT_REFUND_UPDATE_FIELDS,
   approvePayosRefund,
   classifyProviderOutcome,
   createPatientRefund,
@@ -603,5 +680,7 @@ module.exports = {
   rejectPayosRefund,
   startPayosRefundScheduler,
   syncPayosRefund,
+  updatePatientManualRefund,
+  validatePatientManualRefundUpdateRequest,
   validatePatientRefundRequest,
 };
