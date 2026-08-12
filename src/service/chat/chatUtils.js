@@ -35,9 +35,10 @@ const buildSessionTitle = (message) => {
   return title.length > 60 ? `${title.slice(0, 57)}...` : title;
 };
 
+const normalizeWhitespace = (value) => String(value || "").replace(/\s+/g, " ").trim();
+
 const normalizeText = (value) =>
-  String(value || "")
-    .trim()
+  normalizeWhitespace(value)
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
@@ -113,6 +114,24 @@ const parsePreferredDate = (message) => {
   return null;
 };
 
+const parsePreferredTime = (message) => {
+  const rawMessage = String(message || "");
+  const text = normalizeText(message);
+  if (/\bsang\b/.test(text)) return "sang";
+  if (/\btrua\b/.test(text)) return "trua";
+  if (/\bchieu\b/.test(text)) return "chieu";
+  if (
+    /(?<!\w)tối(?!\w)/i.test(rawMessage) ||
+    /\b(?:buoi|lich|gio|khung|ca|vao|luc|tu|den|sau|truoc)\s+toi\b|\btoi\s+(?:nay|mai|thu|ngay)\b/.test(text)
+  ) {
+    return "toi";
+  }
+
+  const match = text.match(/\b([01]?\d|2[0-3])(?:h|:)([0-5]\d)?\b/);
+  if (!match) return null;
+  return `${match[1].padStart(2, "0")}:${(match[2] || "00").padStart(2, "0")}`;
+};
+
 const isOnlineConsultation = (collectedInfo = {}) =>
   normalizeConsultationType(collectedInfo.consultation_type) === "online";
 
@@ -145,8 +164,10 @@ const formatMoney = (value) => {
 };
 
 const buildDoctorName = (doctor) => {
-  const fullName = `${doctor.firstName || ""} ${doctor.lastName || ""}`.trim();
-  const position = String(doctor.positionVi || "").trim();
+  const fullName = normalizeWhitespace(
+    `${doctor.firstName || ""} ${doctor.lastName || ""}`
+  );
+  const position = normalizeWhitespace(doctor.positionVi);
   return `${position ? `${position} ` : ""}${fullName}`.trim() || "Bác sĩ";
 };
 
@@ -199,6 +220,7 @@ module.exports = {
   createChatError,
   requirePatientId,
   buildSessionTitle,
+  normalizeWhitespace,
   normalizeText,
   ensureArray,
   normalizeConsultationType,
@@ -206,6 +228,7 @@ module.exports = {
   getSpecialtyNameCandidates,
   getVietnamDate,
   parsePreferredDate,
+  parsePreferredTime,
   isOnlineConsultation,
   getAppointmentTypeId,
   formatDate,

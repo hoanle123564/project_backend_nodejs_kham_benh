@@ -3,6 +3,7 @@ const { GetcheScheduleDoctorByDate } = require("../doctor/doctorScheduleService"
 const {
   chatDebug,
   chatWarn,
+  normalizeWhitespace,
   normalizeText,
   normalizeSpecialtyNames,
   getSpecialtyNameCandidates,
@@ -11,6 +12,7 @@ const {
   splitTimeRange,
   formatDate,
   buildDoctorName,
+  getVietnamDate,
 } = require("./chatUtils");
 
 const mapScheduleRowToChatSlot = (row, index) => {
@@ -98,22 +100,50 @@ const buildScheduleDateFilter = (collectedInfo = {}, params = []) => {
   return "s.date >= CURDATE()";
 };
 
-const getAvailableSlotsForDoctor = async (doctorId, collectedInfo = {}, debugStats = null) => {
+const DEFAULT_SLOT_PAGE_SIZE = 10;
+
+const matchesPreferredTime = (row, preferredTime) => {
+  if (!preferredTime) return true;
+
+  const start = String(row.startTime || "").slice(0, 2);
+  const hour = Number(start);
+  if (preferredTime.includes("sang")) return Number.isFinite(hour) && hour < 12;
+  if (preferredTime.includes("trua") || preferredTime.includes("chieu")) {
+    return Number.isFinite(hour) && hour >= 12 && hour < 18;
+  }
+  if (preferredTime.includes("toi")) return Number.isFinite(hour) && hour >= 18;
+  return `${row.startTime || ""}`.slice(0, 5) === preferredTime;
+};
+
+const getAvailableSlotPageForDoctor = async (
+  doctorId,
+  collectedInfo = {},
+  options = {}
+) => {
+  const offset = Math.max(0, Number(options.offset) || 0);
+  const limit = Math.max(1, Number(options.limit) || DEFAULT_SLOT_PAGE_SIZE);
+  const debugStats = options.debugStats || null;
   const appointmentTypeId = getAppointmentTypeId(collectedInfo);
   const dates = collectedInfo.preferred_date
     ? [collectedInfo.preferred_date]
-    : Array.from({ length: 30 }, (_, index) =>
-        new Date(Date.now() + index * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
-      );
+    : Array.from({ length: 30 }, (_, index) => getVietnamDate(index));
+  const preferredTime = normalizeText(collectedInfo.preferred_time);
+  const requiredRows = offset + limit + 1;
   const availableRows = [];
 
   for (const date of dates) {
     const response = await GetcheScheduleDoctorByDate(doctorId, date);
     const rows = response?.errCode === 0 ? response.data || [] : [];
     rows
-      .filter((row) => row.appointmentTypeId === appointmentTypeId)
+      .filter(
+        (row) =>
+          row.appointmentTypeId === appointmentTypeId &&
+          Number(row.isActive ?? 1) === 1 &&
+          Number(row.isBookable ?? 1) === 1 &&
+          matchesPreferredTime(row, preferredTime)
+      )
       .forEach((row) => availableRows.push(row));
-    if (availableRows.length >= 10) break;
+    if (availableRows.length >= requiredRows) break;
   }
 
   chatDebug("slot filters:", {
@@ -121,6 +151,9 @@ const getAvailableSlotsForDoctor = async (doctorId, collectedInfo = {}, debugSta
     consultation_type: collectedInfo.consultation_type,
     appointmentTypeId,
     preferred_date: collectedInfo.preferred_date || null,
+    preferred_time: collectedInfo.preferred_time || null,
+    offset,
+    limit,
     schedules_before_capacity: availableRows.length,
     schedules_after_capacity: availableRows.length,
     capacity: availableRows.map((row) => ({
@@ -135,7 +168,22 @@ const getAvailableSlotsForDoctor = async (doctorId, collectedInfo = {}, debugSta
     debugStats.schedulesAfterCapacity += availableRows.length;
   }
 
-  return availableRows.slice(0, 10).map(mapScheduleRowToChatSlot);
+  const pageRows = availableRows.slice(offset, offset + limit);
+  return {
+    slots: pageRows.map((row, index) =>
+      mapScheduleRowToChatSlot(row, offset + index)
+    ),
+    hasMore: availableRows.length > offset + limit,
+  };
+};
+
+const getAvailableSlotsForDoctor = async (doctorId, collectedInfo = {}, debugStats = null) => {
+  const page = await getAvailableSlotPageForDoctor(doctorId, collectedInfo, {
+    offset: 0,
+    limit: DEFAULT_SLOT_PAGE_SIZE,
+    debugStats,
+  });
+  return page.slots;
 };
 
 const getNearestAvailableSlotForDoctor = async (doctorId, collectedInfo = {}) => {
@@ -157,7 +205,104 @@ const getNearestAvailableSlotForDoctor = async (doctorId, collectedInfo = {}) =>
   return null;
 };
 
+const normalizeDoctorNameQuery = (value) =>
+  normalizeWhitespace(value)
+    .replace(/^(?:bs\.?|bác sĩ|bac si|dr\.?)\s+/i, "")
+    .trim();
+
+const DOCTOR_NAME_SQL =
+  "CONCAT_WS(' ', NULLIF(TRIM(u.firstName), ''), NULLIF(TRIM(u.lastName), ''))";
+
+const findDoctorsByNameFromCollectedInfo = async (collectedInfo = {}, debugStats = null) => {
+  const requestedName = normalizeDoctorNameQuery(collectedInfo.doctor_name);
+  if (!requestedName) return [];
+
+  const location = String(collectedInfo.location || "").trim();
+  const whereClauses = [
+    "u.roleId = 'R2'",
+    "u.isActive = 1",
+    "di.isActive = 1",
+    "sp.isActive = 1",
+    "(c.id IS NULL OR c.isActive = 1)",
+    `${DOCTOR_NAME_SQL} LIKE ?`,
+  ];
+  const params = [`%${requestedName}%`];
+
+  if (location && !isOnlineConsultation(collectedInfo)) {
+    whereClauses.push(
+      "(c.provinceCode = ? OR lp.value_vi LIKE ? OR lp.value_en LIKE ? OR c.address LIKE ?)"
+    );
+    params.push(location, `%${location}%`, `%${location}%`, `%${location}%`);
+  }
+
+  const [rows] = await connection.promise().query(
+    `
+      SELECT
+        u.id,
+        u.firstName,
+        u.lastName,
+        p.value_vi AS positionVi,
+        sp.name AS specialty,
+        c.provinceCode,
+        c.address AS clinicAddress,
+        COALESCE(lp.value_vi, c.provinceCode) AS city,
+        EXISTS (
+          SELECT 1
+          FROM schedule onlineSchedule
+          WHERE onlineSchedule.doctorId = u.id
+            AND onlineSchedule.appointmentTypeId = 'AT2'
+            AND onlineSchedule.isActive = 1
+            AND onlineSchedule.date >= CURDATE()
+            AND onlineSchedule.price > 0
+        ) AS supportsOnline
+      FROM users u
+      INNER JOIN doctor_info di ON di.doctorId = u.id
+      INNER JOIN specialty sp ON sp.id = di.specialtyId
+      LEFT JOIN clinic c ON c.id = di.clinicId
+      LEFT JOIN lookup lp ON lp.keyMap = c.provinceCode AND lp.type = 'PROVINCE'
+      LEFT JOIN lookup p ON p.keyMap = u.positionId AND p.type = 'POSITION'
+      WHERE ${whereClauses.join(" AND ")}
+      ORDER BY di.displayOrder ASC, u.createdAt DESC
+      LIMIT 10
+    `,
+    params
+  );
+
+  const candidateRows = rows;
+  const doctors = [];
+
+  for (const row of candidateRows) {
+    const page = await getAvailableSlotPageForDoctor(row.id, collectedInfo, {
+      offset: 0,
+      limit: DEFAULT_SLOT_PAGE_SIZE,
+      debugStats,
+    });
+    const slots = page.slots;
+    doctors.push({
+      index: doctors.length + 1,
+      id: row.id,
+      name: buildDoctorName(row),
+      specialty: row.specialty,
+      city: row.city || row.provinceCode || row.clinicAddress || "",
+      supports_online: Number(row.supportsOnline) === 1,
+      price: Number(slots[0]?.effectivePrice) || null,
+      available_slots: slots,
+      has_more_slots: page.hasMore,
+    });
+  }
+
+  const availableDoctors = doctors.filter((doctor) => doctor.available_slots.length > 0);
+  if (debugStats && availableDoctors.length === 0) {
+    debugStats.reason = rows.length === 0 ? "NO_DOCTOR_FOR_NAME" : "NO_SCHEDULE_FOR_DATE";
+  }
+  return availableDoctors;
+};
+
 const findDoctorsFromCollectedInfo = async (collectedInfo = {}, debugStats = null) => {
+  if (collectedInfo.doctor_name) {
+    return findDoctorsByNameFromCollectedInfo(collectedInfo, debugStats);
+  }
+
   const specialtyMatch = await getSpecialtyMatchInfo(collectedInfo.specialties);
   if (specialtyMatch.requested.length === 0) {
     if (debugStats) debugStats.reason = "AI_NO_SPECIALTY";
@@ -205,12 +350,12 @@ const findDoctorsFromCollectedInfo = async (collectedInfo = {}, debugStats = nul
         COALESCE(lp.value_vi, c.provinceCode) AS city,
         EXISTS (
           SELECT 1
-          FROM doctor_schedule_rule dsr
-          WHERE dsr.doctorId = u.id
-            AND dsr.ruleType IN ('FIXED', 'FLEXIBLE')
-            AND dsr.appointmentTypeId = 'AT2'
-            AND dsr.isActive = 1
-            AND dsr.price > 0
+          FROM schedule onlineSchedule
+          WHERE onlineSchedule.doctorId = u.id
+            AND onlineSchedule.appointmentTypeId = 'AT2'
+            AND onlineSchedule.isActive = 1
+            AND onlineSchedule.date >= CURDATE()
+            AND onlineSchedule.price > 0
         ) AS supportsOnline
       FROM users u
       INNER JOIN doctor_info di
@@ -264,8 +409,6 @@ const findDoctorsFromCollectedInfo = async (collectedInfo = {}, debugStats = nul
       }
     }
     if (slots.length === 0) continue;
-    const online = isOnlineConsultation(collectedInfo);
-
     doctors.push({
       index: doctors.length + 1,
       id: row.id,
@@ -296,7 +439,10 @@ module.exports = {
   mapScheduleRowToChatSlot,
   getSpecialtyMatchInfo,
   buildScheduleDateFilter,
+  normalizeDoctorNameQuery,
+  getAvailableSlotPageForDoctor,
   getAvailableSlotsForDoctor,
   getNearestAvailableSlotForDoctor,
+  findDoctorsByNameFromCollectedInfo,
   findDoctorsFromCollectedInfo,
 };

@@ -182,6 +182,57 @@ test("emergency safety survives FastAPI boundary and blocks every booking state"
   assert.equal(bookingCalls, 0);
 
   session = {
+    id: 4,
+    sessionId: "composite-emergency-outage",
+    patientId: 3,
+    state: STATES.CONFIRM_BOOKING,
+    collectedInfo: defaultCollectedInfo(),
+    selectedDoctorId: 7,
+    selectedScheduleId: 9,
+  };
+  const compositeEmergencyOutage = await outageFlow.handleChatMessage({
+    sessionId: session.sessionId,
+    patientId: session.patientId,
+    message: "Ca nay rat gap, benh nhan dau nguc bop nghet kem va mo hoi lanh, nguoi benh tai mat o Go Vap, vua goi nguoi ho tro",
+  });
+  assert.equal(compositeEmergencyOutage.data.urgent, true);
+  assert.equal(compositeEmergencyOutage.state, STATES.START);
+  assert.match(compositeEmergencyOutage.reply, /115/);
+  assert.equal(bookingCalls, 0);
+
+  session = {
+    id: 5,
+    sessionId: "historical-composite-outage",
+    patientId: 3,
+    state: STATES.START,
+    collectedInfo: defaultCollectedInfo(),
+  };
+  const historicalCompositeOutage = await outageFlow.handleChatMessage({
+    sessionId: session.sessionId,
+    patientId: session.patientId,
+    message: "Tôi từng đau ngực bóp nghẹt và vã mồ hôi lạnh nhưng hiện đã ổn",
+  });
+  assert.equal(historicalCompositeOutage.success, false);
+  assert.equal(historicalCompositeOutage.state, STATES.ERROR);
+  assert.equal(historicalCompositeOutage.data.urgent, undefined);
+
+  session = {
+    id: 6,
+    sessionId: "negated-composite-outage",
+    patientId: 3,
+    state: STATES.START,
+    collectedInfo: defaultCollectedInfo(),
+  };
+  const negatedCompositeOutage = await outageFlow.handleChatMessage({
+    sessionId: session.sessionId,
+    patientId: session.patientId,
+    message: "Tôi đau ngực bóp nghẹt nhưng không vã mồ hôi lạnh",
+  });
+  assert.equal(negatedCompositeOutage.success, false);
+  assert.equal(negatedCompositeOutage.state, STATES.ERROR);
+  assert.equal(negatedCompositeOutage.data.urgent, undefined);
+
+  session = {
     id: 3,
     sessionId: "ordinary-outage",
     patientId: 3,
@@ -196,5 +247,5 @@ test("emergency safety survives FastAPI boundary and blocks every booking state"
   assert.equal(ordinaryOutage.success, false);
   assert.equal(ordinaryOutage.state, STATES.ERROR);
   assert.equal(ordinaryOutage.data.urgent, undefined);
-  assert.equal(outageAiCalls, 2);
+  assert.equal(outageAiCalls, 5);
 });

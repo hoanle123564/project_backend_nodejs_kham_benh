@@ -19,7 +19,11 @@ const normalizeAiResult = (responseJson) => {
     consultation_type: normalized.consultation_type || null,
     location: normalized.location || null,
     specialties: normalizeArray(normalized.specialties || normalized.specialty),
+    doctor_name: normalized.doctor_name || normalized.doctorName || null,
     preferred_date: normalized.preferred_date || null,
+    preferred_time: normalized.preferred_time || normalized.preferredTime || null,
+    specialty_state: normalized.specialty_state || null,
+    specialty_taxonomy_mismatches: normalizeArray(normalized.specialty_taxonomy_mismatches),
     urgent: Boolean(normalized.urgent || ai.urgent || responseJson?.urgent),
     routing_source:
       normalized.routing_source || ai.routing_source || responseJson?.routing_source || null,

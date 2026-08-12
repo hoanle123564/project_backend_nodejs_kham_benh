@@ -4,7 +4,7 @@ const { bookAppointment, cancelBookAppointment } = require("../PatientService");
 const { cancelPaymentIntent, getPaymentIntent } = require("../paymentService");
 const {
   STATES,
-  ACTIONABLE_INTENTS,
+  SUPPORTED_INTENTS,
   DEFAULT_SESSION_TITLE,
   defaultCollectedInfo,
 } = require("./chatState");
@@ -15,6 +15,7 @@ const {
   normalizeSpecialtyNames,
   ensureArray,
   parsePreferredDate,
+  parsePreferredTime,
   isOnlineConsultation,
   parseSelectionNumber,
   normalizePhone,
@@ -34,8 +35,10 @@ const {
 } = require("./chatSessionStore");
 const {
   findDoctorsFromCollectedInfo,
+  getAvailableSlotPageForDoctor,
   getAvailableSlotsForDoctor,
 } = require("./chatDoctorSearchService");
+const { isPriceQuestion, resolveChatFaq } = require("./chatFaqService");
 
 const EMERGENCY_REPLY =
   "Đây có thể là tình trạng cấp cứu. Hãy gọi 115 hoặc đến cơ sở cấp cứu gần nhất ngay. " +
@@ -53,11 +56,25 @@ const EMERGENCY_PHRASES = [
   "soc phan ve",
   "sung moi kho tho",
 ];
+const COMPOSITE_EMERGENCY_CHEST_PHRASES = [
+  "dau nguc bop nghet",
+  "dau nguc nghen",
+  "dau nguc chat",
+];
+const COMPOSITE_EMERGENCY_ASSOCIATED_PHRASES = [
+  "mo hoi lanh",
+  "tai mat",
+  "lanh nguoi",
+  "goi nguoi ho tro",
+  "rat gap",
+];
 const DRAFT_CANCELLATION_STATES = new Set([
   STATES.ASK_LOCATION,
   STATES.ASK_CONSULTATION_TYPE,
+  STATES.ASK_AVAILABLE_DOCTOR,
   STATES.WAIT_SELECT_DOCTOR,
   STATES.WAIT_SELECT_SLOT,
+  STATES.SHOW_AVAILABLE_SLOTS,
   STATES.ASK_PATIENT_NAME,
   STATES.ASK_PATIENT_PHONE,
   STATES.ASK_PATIENT_EMAIL,
@@ -97,7 +114,48 @@ const isEmergencyResult = (aiResult = {}) => {
 
 const hasEmergencyPhrase = (message) => {
   const normalizedMessage = normalizeText(message);
-  return EMERGENCY_PHRASES.some((phrase) => normalizedMessage.includes(phrase));
+  if (EMERGENCY_PHRASES.some((phrase) => normalizedMessage.includes(phrase))) {
+    return true;
+  }
+
+  const hasCompositeChestPain = COMPOSITE_EMERGENCY_CHEST_PHRASES.some((phrase) =>
+    normalizedMessage.includes(phrase)
+  );
+  const hasAssociatedSign = COMPOSITE_EMERGENCY_ASSOCIATED_PHRASES.some((phrase) =>
+    normalizedMessage.includes(phrase)
+  );
+  const isNegatedChest = /\b(?:khong|chua)\b[^.!?]*\bdau nguc (?:bop nghet|nghen|chat)\b/.test(
+    normalizedMessage
+  );
+  const isNegatedAssociated = /\b(?:khong|chua)\s+(?:va\s+)?(?:mo hoi lanh|tai mat|lanh nguoi|goi nguoi ho tro)\b/.test(
+    normalizedMessage
+  );
+  const hasHistoryMarker = /\b(?:tung|tien su|truoc day|tuan truoc|thang truoc|hom qua|nam ngoai)\b/.test(
+    normalizedMessage
+  );
+  const hasCurrentChestEvent = /\b(?:dang|hien dang|luc nay|bay gio|vua)\b[^.!?]*\bdau nguc (?:bop nghet|nghen|chat)\b/.test(
+    normalizedMessage
+  );
+  const isResolvedHistory =
+    hasHistoryMarker &&
+    /\b(?:hien da on|hien da tinh|da on|da het|khoe roi|khong con)\b/.test(
+      normalizedMessage
+    );
+  const isHistoricalOnly = hasHistoryMarker && !hasCurrentChestEvent;
+  const isEducationalContext =
+    /bai viet|giao trinh|la gi|co nguy hiem khong|chi muon hoi|dang hoi|tim hieu|the nao|\bneu\b|\bgia su\b/.test(
+      normalizedMessage
+    ) && !hasCurrentChestEvent;
+
+  return (
+    hasCompositeChestPain &&
+    hasAssociatedSign &&
+    !isNegatedChest &&
+    !isNegatedAssociated &&
+    !isResolvedHistory &&
+    !isHistoricalOnly &&
+    !isEducationalContext
+  );
 };
 
 const normalizeBookingId = (value) => {
@@ -193,6 +251,7 @@ const mergeAiResult = (currentInfo, normalized, message) => {
   const specialties = normalizeSpecialtyNames(normalized.specialties);
   const symptoms = ensureArray(normalized.symptoms);
   const preferredDate = parsePreferredDate(message);
+  const preferredTime = normalized.preferred_time || parsePreferredTime(message);
 
   nextInfo.intent = normalized.intent || nextInfo.intent;
   nextInfo.intent_score = normalized.intent_score ?? nextInfo.intent_score;
@@ -201,7 +260,9 @@ const mergeAiResult = (currentInfo, normalized, message) => {
   nextInfo.consultation_type = consultationType || nextInfo.consultation_type;
   nextInfo.location = normalized.location || nextInfo.location;
   nextInfo.specialties = specialties.length ? specialties : nextInfo.specialties;
+  nextInfo.doctor_name = normalized.doctor_name || nextInfo.doctor_name;
   nextInfo.preferred_date = preferredDate || normalized.preferred_date || nextInfo.preferred_date;
+  nextInfo.preferred_time = preferredTime || nextInfo.preferred_time;
   nextInfo.debugReason = null;
   nextInfo.reason =
     symptoms.length || normalized.duration
@@ -213,11 +274,13 @@ const mergeAiResult = (currentInfo, normalized, message) => {
 
 const getMissingRequiredInfo = (collectedInfo = {}) => {
   const missing = [];
+  const hasDoctorName = Boolean(String(collectedInfo.doctor_name || "").trim());
 
-  if (normalizeSpecialtyNames(collectedInfo.specialties).length === 0) {
+  if (!hasDoctorName && normalizeSpecialtyNames(collectedInfo.specialties).length === 0) {
     missing.push("specialties");
   }
   if (
+    !hasDoctorName &&
     !isOnlineConsultation(collectedInfo) &&
     !String(collectedInfo.location || "").trim()
   ) {
@@ -283,6 +346,56 @@ const formatSlotsReply = (slots, doctor) => {
   return lines.join("\n");
 };
 
+const hasExplicitBookingPhrase = (message) => {
+  const text = normalizeText(message);
+  return /\b(?:dat lich|dat hen|book|booking|muon dat)\b/.test(text);
+};
+
+const isLoadMoreAvailabilityRequest = (message) => {
+  const text = normalizeText(message);
+  return (
+    /\bxem them\b|\bxem tiep\b|\bthem lich\b|\blich tiep theo\b/.test(text) ||
+    /\bcon lich\b/.test(text)
+  );
+};
+
+const isReadOnlyAvailabilityRequest = (message, normalized = {}, collectedInfo = {}) => {
+  const text = normalizeText(message);
+  const doctorName = normalized.doctor_name || collectedInfo.doctor_name;
+  return Boolean(
+    normalized.intent === "FIND_DOCTOR" &&
+      doctorName &&
+      !hasExplicitBookingPhrase(message) &&
+      (/\blich\b/.test(text) ||
+        /\bkhung gio\b|\bgio kham\b|\bthoi gian kham\b/.test(text))
+  );
+};
+
+const resetReadOnlyAvailability = (collectedInfo) => {
+  collectedInfo.readOnlyAvailability = {
+    doctorId: null,
+    doctor: null,
+    offset: 0,
+    hasMore: false,
+  };
+};
+
+const formatReadOnlySlotsReply = (slots, doctor, hasMore = false) => {
+  const lines = [`Lịch trống tham khảo của bác sĩ ${doctor?.name || ""}:`];
+  slots.forEach((slot) => {
+    lines.push(`${slot.index}. ${slot.date}, ${slot.start_time} - ${slot.end_time}`);
+  });
+  if (!slots.length) {
+    lines.push("Hiện chưa có lịch trống phù hợp vào thời gian này.");
+  } else {
+    lines.push("Đây là thông tin xem lịch, chưa tạo cuộc hẹn. Nếu muốn đặt, bạn hãy nói 'đặt lịch'.");
+  }
+  if (hasMore) {
+    lines.push("", "Gõ \"xem thêm\" để xem các khung giờ tiếp theo.");
+  }
+  return lines.join("\n");
+};
+
 const formatConfirmReply = (session) => {
   const info = session.collectedInfo || defaultCollectedInfo();
   const doctor = info.selectedDoctor || {};
@@ -331,6 +444,7 @@ const findDoctorsAndReply = async (session) => {
   session.collectedInfo.slots = [];
   session.collectedInfo.selectedDoctor = null;
   session.collectedInfo.selectedSlot = null;
+  resetReadOnlyAvailability(session.collectedInfo);
   session.collectedInfo.debugReason = debugStats.reason;
   session.selectedDoctorId = null;
   session.selectedScheduleId = null;
@@ -374,6 +488,248 @@ const continueAfterRequiredInfo = async (session) => {
   return findDoctorsAndReply(session);
 };
 
+const handleNonBookingIntent = async (session, message, intent) => {
+  if (intent === "GREETING") {
+    session.state = STATES.START;
+    return responseForSession(
+      session,
+      "Xin chào! Tôi có thể giúp tìm bác sĩ, xem lịch trống, đặt hoặc hủy lịch khám. Bạn muốn thực hiện việc nào ạ?",
+      true,
+      { intent }
+    );
+  }
+
+  if (intent === "PROVIDE_INFO" || intent === "OUT_OF_SCOPE") {
+    const faq = await resolveChatFaq(message, session.collectedInfo);
+    if (faq) {
+      session.state = STATES.START;
+      return responseForSession(session, faq.reply, true, {
+        intent,
+        source: faq.source,
+      });
+    }
+
+    session.state = STATES.START;
+    return responseForSession(
+      session,
+      intent === "OUT_OF_SCOPE"
+        ? "Tôi chỉ hỗ trợ tìm bác sĩ, xem lịch, đặt/hủy lịch và thông tin phòng khám có trong hệ thống. Tôi không thể tư vấn thuốc hoặc chẩn đoán bệnh."
+        : "Tôi có thể cung cấp thông tin có sẵn về bác sĩ, lịch trống, giá khám và phòng khám. Bạn muốn hỏi thông tin nào ạ?",
+      true,
+      { intent, source: "supported_clinic_data" }
+    );
+  }
+
+  if (intent === "CONFIRM_BOOKING") {
+    if (session.collectedInfo?.selectedSlot) {
+      session.state = STATES.CONFIRM_BOOKING;
+      return responseForSession(session, formatConfirmReply(session), true, { intent });
+    }
+    session.state = STATES.START;
+    return responseForSession(
+      session,
+      "Hiện chưa có cuộc hẹn nào đang chờ xác nhận. Bạn hãy tìm bác sĩ hoặc bắt đầu đặt lịch trước nhé.",
+      true,
+      { intent }
+    );
+  }
+
+  if (intent === "CANCEL_BOOKING") {
+    return handleCancellationMessage(session, message);
+  }
+
+  session.state = STATES.START;
+  return responseForSession(
+    session,
+    "Tôi chưa xác định được yêu cầu. Bạn có thể nói rõ muốn tìm bác sĩ, xem lịch hay đặt lịch không ạ?",
+    true,
+    { intent: intent || "UNKNOWN" }
+  );
+};
+
+const mergeAvailabilityInfo = (session, normalized, message) => {
+  const nextInfo = mergeAiResult(session.collectedInfo, normalized, message);
+  if (!nextInfo.doctor_name && session.state === STATES.ASK_AVAILABLE_DOCTOR) {
+    nextInfo.doctor_name = String(message || "").trim();
+  }
+  session.collectedInfo = nextInfo;
+  return nextInfo;
+};
+
+const handleAvailableSlotRequest = async (session, message, normalized = {}) => {
+  const info = mergeAvailabilityInfo(session, normalized, message);
+  if (!String(info.doctor_name || "").trim()) {
+    session.state = STATES.ASK_AVAILABLE_DOCTOR;
+    session.collectedInfo.slots = [];
+    resetReadOnlyAvailability(session.collectedInfo);
+    session.selectedDoctorId = null;
+    session.selectedScheduleId = null;
+    return responseForSession(
+      session,
+      "Bạn vui lòng cho biết tên bác sĩ muốn xem lịch. Tôi sẽ chỉ hiển thị lịch, chưa tạo cuộc hẹn.",
+      true,
+      { readOnly: true, read_only: true }
+    );
+  }
+
+  const debugStats = {
+    reason: null,
+    schedulesBeforeCapacity: 0,
+    schedulesAfterCapacity: 0,
+  };
+  const doctors = await findDoctorsFromCollectedInfo(info, debugStats);
+  const doctor = doctors[0] || null;
+  const slots = doctor?.available_slots || [];
+  const hasMoreSlots = Boolean(doctor?.has_more_slots);
+  session.collectedInfo.doctors = [];
+  session.collectedInfo.slots = slots;
+  session.collectedInfo.selectedDoctor = null;
+  session.collectedInfo.selectedSlot = null;
+  session.collectedInfo.readOnlyAvailability = doctor
+    ? {
+        doctorId: doctor.id,
+        doctor: {
+          id: doctor.id,
+          name: doctor.name,
+          specialty: doctor.specialty,
+          city: doctor.city,
+          supports_online: doctor.supports_online,
+        },
+        offset: slots.length,
+        hasMore: hasMoreSlots,
+      }
+    : {
+        doctorId: null,
+        doctor: null,
+        offset: 0,
+        hasMore: false,
+      };
+  session.collectedInfo.debugReason = debugStats.reason;
+  session.selectedDoctorId = null;
+  session.selectedScheduleId = null;
+  session.state = STATES.SHOW_AVAILABLE_SLOTS;
+
+  if (!doctor) {
+    return responseForSession(
+      session,
+      "Không tìm thấy bác sĩ hoặc lịch trống phù hợp với thông tin bạn vừa gửi.",
+      true,
+      {
+        readOnly: true,
+        read_only: true,
+        doctor: null,
+        slots: [],
+        hasMoreSlots: false,
+        debugReason: debugStats.reason || "NO_DOCTOR_FOR_NAME",
+      }
+    );
+  }
+
+  return responseForSession(
+    session,
+    formatReadOnlySlotsReply(slots, doctor, hasMoreSlots),
+    true,
+    {
+      readOnly: true,
+      read_only: true,
+      doctor,
+      slots,
+      hasMoreSlots,
+      preferredDate: info.preferred_date || null,
+    }
+  );
+};
+
+const handleAskAvailableDoctor = async (session, message, aiResult = null) => {
+  const normalized = aiResult?.normalized || {};
+  if (["FIND_DOCTOR", "BOOK_APPOINTMENT"].includes(normalized.intent)) {
+    return handleStart(session, message, aiResult);
+  }
+  if (normalized.intent && ["GREETING", "PROVIDE_INFO", "OUT_OF_SCOPE", "CONFIRM_BOOKING", "CANCEL_BOOKING"].includes(normalized.intent)) {
+    return handleNonBookingIntent(session, message, normalized.intent);
+  }
+  return handleAvailableSlotRequest(session, message, normalized);
+};
+
+const handleLoadMoreAvailability = async (session) => {
+  const info = session.collectedInfo || defaultCollectedInfo();
+  const context = info.readOnlyAvailability || {};
+  const doctor = context.doctor || null;
+
+  if (!context.doctorId || !doctor) {
+    return responseForSession(
+      session,
+      "Hiện chưa có danh sách lịch để xem thêm.",
+      true,
+      { readOnly: true, read_only: true, hasMoreSlots: false }
+    );
+  }
+
+  if (!context.hasMore) {
+    return responseForSession(
+      session,
+      "Đã hiển thị hết lịch trống phù hợp.",
+      true,
+      { readOnly: true, read_only: true, doctor, slots: [], hasMoreSlots: false }
+    );
+  }
+
+  const page = await getAvailableSlotPageForDoctor(
+    context.doctorId,
+    info,
+    { offset: context.offset || 0, limit: 10 }
+  );
+  const slots = page?.slots || [];
+  const nextOffset = (context.offset || 0) + slots.length;
+  const hasMoreSlots = Boolean(page?.hasMore && slots.length);
+
+  info.slots = slots;
+  info.readOnlyAvailability = {
+    ...context,
+    offset: nextOffset,
+    hasMore: hasMoreSlots,
+  };
+  session.collectedInfo = info;
+  session.state = STATES.SHOW_AVAILABLE_SLOTS;
+
+  return responseForSession(
+    session,
+    formatReadOnlySlotsReply(slots, doctor, hasMoreSlots),
+    true,
+    {
+      readOnly: true,
+      read_only: true,
+      doctor,
+      slots,
+      hasMoreSlots,
+      preferredDate: info.preferred_date || null,
+    }
+  );
+};
+
+const handleShowAvailableSlots = async (session, message, aiResult = null) => {
+  if (isLoadMoreAvailabilityRequest(message)) {
+    return handleLoadMoreAvailability(session);
+  }
+
+  const intent = aiResult?.normalized?.intent;
+  if (["FIND_DOCTOR", "BOOK_APPOINTMENT"].includes(intent)) {
+    return handleStart(session, message, aiResult);
+  }
+  if (intent === "ASK_AVAILABLE_SLOT") {
+    return handleAvailableSlotRequest(session, message, aiResult.normalized);
+  }
+  if (["GREETING", "PROVIDE_INFO", "OUT_OF_SCOPE", "CONFIRM_BOOKING", "CANCEL_BOOKING"].includes(intent)) {
+    return handleNonBookingIntent(session, message, intent);
+  }
+  return responseForSession(
+    session,
+    "Danh sách trên chỉ để xem lịch. Nếu muốn đặt lịch, bạn hãy nói 'đặt lịch' và tôi sẽ bắt đầu quy trình đặt hẹn.",
+    true,
+    { readOnly: true, read_only: true }
+  );
+};
+
 const handleStart = async (session, message, existingAiResult = null) => {
   const aiResult = existingAiResult || (await analyzeMessage(message));
   const normalized = aiResult.normalized || {};
@@ -393,15 +749,34 @@ const handleStart = async (session, message, existingAiResult = null) => {
     preferred_date: normalized.preferred_date || null,
   });
 
-  if (!ACTIONABLE_INTENTS.has(normalized.intent)) {
+  session.collectedInfo = mergeAiResult(session.collectedInfo, normalized, message);
+
+  if (!hasExplicitBookingPhrase(message) && isPriceQuestion(normalizeText(message))) {
+    return handleNonBookingIntent(session, message, "PROVIDE_INFO");
+  }
+
+  if (isReadOnlyAvailabilityRequest(message, normalized, session.collectedInfo)) {
+    return handleAvailableSlotRequest(session, message, normalized);
+  }
+
+  if (normalized.intent === "ASK_AVAILABLE_SLOT") {
+    return handleAvailableSlotRequest(session, message, normalized);
+  }
+
+  if (["GREETING", "PROVIDE_INFO", "OUT_OF_SCOPE", "CONFIRM_BOOKING", "CANCEL_BOOKING"].includes(normalized.intent)) {
+    return handleNonBookingIntent(session, message, normalized.intent);
+  }
+
+  if (!SUPPORTED_INTENTS.has(normalized.intent)) {
     session.state = STATES.START;
     return responseForSession(
       session,
-      "Tôi có thể hỗ trợ bạn tìm bác sĩ và đặt lịch khám. Bạn vui lòng mô tả triệu chứng hoặc nhu cầu khám."
+      "Tôi chưa xác định được yêu cầu. Bạn có thể nói rõ muốn tìm bác sĩ, xem lịch hay đặt lịch không ạ?",
+      true,
+      { intent: normalized.intent || "UNKNOWN" }
     );
   }
 
-  session.collectedInfo = mergeAiResult(session.collectedInfo, normalized, message);
   chatDebug("preferred_date:", session.collectedInfo.preferred_date || null);
   chatDebug("collectedInfo:", {
     intent: session.collectedInfo.intent,
@@ -552,6 +927,7 @@ const cancelSession = (
   session.collectedInfo.slots = [];
   session.collectedInfo.selectedDoctor = null;
   session.collectedInfo.selectedSlot = null;
+  resetReadOnlyAvailability(session.collectedInfo);
   session.selectedDoctorId = null;
   session.selectedScheduleId = null;
   session.bookingId = null;
@@ -868,10 +1244,14 @@ const dispatchByState = async (session, message, aiResult = null) => {
       return handleAskLocation(session, message);
     case STATES.ASK_CONSULTATION_TYPE:
       return handleAskConsultationType(session, message);
+    case STATES.ASK_AVAILABLE_DOCTOR:
+      return handleAskAvailableDoctor(session, message, aiResult);
     case STATES.WAIT_SELECT_DOCTOR:
       return handleWaitSelectDoctor(session, message);
     case STATES.WAIT_SELECT_SLOT:
       return handleWaitSelectSlot(session, message);
+    case STATES.SHOW_AVAILABLE_SLOTS:
+      return handleShowAvailableSlots(session, message, aiResult);
     case STATES.ASK_PATIENT_NAME:
       return handleAskPatientName(session, message);
     case STATES.ASK_PATIENT_PHONE:
@@ -920,6 +1300,8 @@ const handleChatMessage = async ({ sessionId, message, patientId, patientEmail }
       ? emergencyResponse(session, aiResult)
       : isCancelMessage(trimmedMessage)
         ? await handleCancellationMessage(session, trimmedMessage)
+        : aiResult?.normalized?.intent === "CANCEL_BOOKING"
+          ? await handleNonBookingIntent(session, trimmedMessage, "CANCEL_BOOKING")
         : await dispatchByState(session, trimmedMessage, aiResult);
 
     await saveSession(session);
@@ -957,6 +1339,9 @@ module.exports = {
   askForMissingInfo,
   formatDoctorsReply,
   formatSlotsReply,
+  formatReadOnlySlotsReply,
+  isReadOnlyAvailabilityRequest,
+  isLoadMoreAvailabilityRequest,
   formatConfirmReply,
   formatPaymentPendingReply,
   parseBookingId,
@@ -971,6 +1356,7 @@ module.exports = {
   findDoctorsAndReply,
   continueAfterRequiredInfo,
   handleStart,
+  handleLoadMoreAvailability,
   handleAskLocation,
   handleAskConsultationType,
   handleWaitSelectDoctor,

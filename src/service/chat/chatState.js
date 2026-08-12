@@ -2,8 +2,10 @@ const STATES = Object.freeze({
   START: "START",
   ASK_LOCATION: "ASK_LOCATION",
   ASK_CONSULTATION_TYPE: "ASK_CONSULTATION_TYPE",
+  ASK_AVAILABLE_DOCTOR: "ASK_AVAILABLE_DOCTOR",
   WAIT_SELECT_DOCTOR: "WAIT_SELECT_DOCTOR",
   WAIT_SELECT_SLOT: "WAIT_SELECT_SLOT",
+  SHOW_AVAILABLE_SLOTS: "SHOW_AVAILABLE_SLOTS",
   ASK_PATIENT_NAME: "ASK_PATIENT_NAME",
   ASK_PATIENT_PHONE: "ASK_PATIENT_PHONE",
   ASK_PATIENT_EMAIL: "ASK_PATIENT_EMAIL",
@@ -14,6 +16,17 @@ const STATES = Object.freeze({
   ERROR: "ERROR",
 });
 
+const SUPPORTED_INTENTS = new Set([
+  "GREETING",
+  "FIND_DOCTOR",
+  "ASK_AVAILABLE_SLOT",
+  "BOOK_APPOINTMENT",
+  "CONFIRM_BOOKING",
+  "CANCEL_BOOKING",
+  "PROVIDE_INFO",
+  "OUT_OF_SCOPE",
+  "EMERGENCY",
+]);
 const ACTIONABLE_INTENTS = new Set(["FIND_DOCTOR", "BOOK_APPOINTMENT"]);
 const APPOINTMENT_TYPE = Object.freeze({ OFFLINE: "AT1", ONLINE: "AT2" });
 const DEFAULT_SESSION_TITLE = "Cuộc trò chuyện mới";
@@ -44,11 +57,19 @@ const defaultCollectedInfo = () => ({
   consultation_type: null,
   location: null,
   specialties: [],
+  doctor_name: null,
   preferred_date: null,
+  preferred_time: null,
   debugReason: null,
   reason: null,
   doctors: [],
   slots: [],
+  readOnlyAvailability: {
+    doctorId: null,
+    doctor: null,
+    offset: 0,
+    hasMore: false,
+  },
   selectedDoctor: null,
   selectedSlot: null,
   patientName: null,
@@ -59,6 +80,7 @@ const defaultCollectedInfo = () => ({
 
 module.exports = {
   STATES,
+  SUPPORTED_INTENTS,
   ACTIONABLE_INTENTS,
   APPOINTMENT_TYPE,
   DEFAULT_SESSION_TITLE,
