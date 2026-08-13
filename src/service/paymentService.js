@@ -5,12 +5,14 @@ const { getSchedulePriceAtBooking } = require("./adminDashboardService");
 const { createDoctorNotification, createPatientBookingStatusNotification } = require("./notificationService");
 const { isScheduleStarted, normalizeDate } = require("./doctor/doctorSchedulePolicy");
 const { assignBookingQueueNumberInCurrentTransaction } = require("./bookingQueueService");
+const { createPayosIdempotencyKey } = require("./payosPayoutService");
 
 const PAYMENT_STATUS = Object.freeze({ PENDING: "PPS1", PAID_PENDING_DOCTOR: "PPS2", COMPLETED: "PPS3", EXPIRED: "PPS4", MANUAL_REVIEW: "PPS5", REFUND_PENDING: "PPS6", REFUNDED: "PPS7", REFUND_FAILED: "PPS8" });
 const REFUND_STATUS = Object.freeze({ PENDING: "RFS1", PROCESSING: "RFS2", REFUNDED: "RFS3", FAILED: "RFS4", APPROVED: "RFS5", REJECTED: "RFS6" });
 const PROVIDER = "SEPAY";
 const PAYMENT_METHOD = "PAY2";
 const PAYMENT_CURRENCY = "VND";
+const PAYOS_REFUND_MODE = "PAYOS";
 const CAPACITY_EXCLUDED_STATUS_IDS = Object.freeze(["S3", "S4", "S5", "S6", "S7"]);
 const PUBLIC_PAYMENT_STATUS = Object.freeze({
   [PAYMENT_STATUS.PENDING]: "PENDING", [PAYMENT_STATUS.PAID_PENDING_DOCTOR]: "PAID", [PAYMENT_STATUS.COMPLETED]: "PAID",
@@ -138,6 +140,25 @@ const createManualRefund = async ({ payment, bookingId = null, reason }, db) => 
   await db.query("INSERT IGNORE INTO payment_refunds (paymentId, bookingId, amount, statusId, reason, refundMode, receiverBank, receiverAccountName, receiverAccountNumber) VALUES (?, ?, ?, ?, ?, 'MANUAL', ?, ?, ?)", [payment.id, bookingId, payment.amount, REFUND_STATUS.PENDING, reason, profile.refundBankName || null, profile.refundAccountName || null, profile.refundAccountNumber || null]);
 };
 
+const createPayosRefund = async ({ payment, bookingId, reason }, db) => {
+  const [profiles] = await db.query("SELECT refundBankName, refundAccountName, refundAccountNumber FROM patient_profile WHERE patientId = ? LIMIT 1", [payment.patientId]);
+  const profile = profiles[0] || {};
+  await db.query("UPDATE appointment_payments SET statusId = ? WHERE id = ?", [PAYMENT_STATUS.REFUND_PENDING, payment.id]);
+  const [inserted] = await db.query(
+    `INSERT IGNORE INTO payment_refunds
+      (paymentId, bookingId, amount, statusId, reason, refundMode,
+       receiverBank, receiverAccountName, receiverAccountNumber)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [payment.id, bookingId, payment.amount, REFUND_STATUS.PENDING, String(reason || "").trim() || "DOCTOR_REJECTED", PAYOS_REFUND_MODE, profile.refundBankName || null, profile.refundAccountName || null, profile.refundAccountNumber || null],
+  );
+  if (inserted.affectedRows) {
+    await db.query(
+      "UPDATE payment_refunds SET referenceId = ?, idempotencyKey = ? WHERE id = ?",
+      [`REFUND_${inserted.insertId}`, createPayosIdempotencyKey(), inserted.insertId],
+    );
+  }
+};
+
 const processIntentPayment = async ({ payment, payload, config, db, eventId }) => {
   if (payload.transferType !== "in") { await markEvent(db, eventId, "MANUAL_REVIEW", "INVALID_TRANSFER_TYPE"); return { matched: false, reason: "INVALID_TRANSFER_TYPE", paymentId: payment.id }; }
   if (String(payload.accountNumber || "").trim() !== config.accountNumber || Number(payload.transferAmount) !== Number(payment.amount)) {
@@ -236,7 +257,7 @@ const cancelPaymentIntent = async ({ paymentId, user }) => {
 
 const applyDoctorPaymentDecision = async ({ bookingId, statusId, reason, actor }, db) => {
   if (!["S8", "S6"].includes(statusId)) return;
-  const [payments] = await db.query("SELECT * FROM appointment_payments WHERE bookingId = ? LIMIT 1 FOR UPDATE", [bookingId]);
+  const [payments] = await db.query("SELECT p.*, s.appointmentTypeId FROM appointment_payments p INNER JOIN booking b ON b.id = p.bookingId INNER JOIN schedule s ON s.id = b.scheduleId WHERE p.bookingId = ? LIMIT 1 FOR UPDATE", [bookingId]);
   const payment = payments[0];
   if (!payment) return null;
   if (statusId === "S8") {
@@ -247,7 +268,8 @@ const applyDoctorPaymentDecision = async ({ bookingId, statusId, reason, actor }
   }
   if (payment.statusId === PAYMENT_STATUS.PENDING) return payment;
   if (![PAYMENT_STATUS.PAID_PENDING_DOCTOR, PAYMENT_STATUS.COMPLETED].includes(payment.statusId)) { const error = new Error("Online booking payment cannot be refunded"); error.errCode = 2; throw error; }
-  await createManualRefund({ payment, bookingId, reason }, db);
+  if (payment.appointmentTypeId === "AT2") await createPayosRefund({ payment, bookingId, reason }, db);
+  else await createManualRefund({ payment, bookingId, reason }, db);
   return { ...payment, statusId: PAYMENT_STATUS.REFUND_PENDING };
 };
 const listRefunds = async () => {

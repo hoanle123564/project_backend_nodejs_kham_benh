@@ -142,7 +142,7 @@ test("manual S6 refund update rejects a different patient", { concurrency: false
   }
 });
 
-test("manual S6 refund update rejects a non-manual or processed refund", { concurrency: false }, async () => {
+test("S6 refund update accepts PAYOS and rejects processed refunds", { concurrency: false }, async () => {
   for (const refundOverride of [{ refundMode: "PAYOS" }, { statusId: "RFS3" }]) {
     const loaded = loadRefundService(buildState({ refund: { ...buildState().refund, ...refundOverride } }));
     try {
@@ -152,14 +152,21 @@ test("manual S6 refund update rejects a non-manual or processed refund", { concu
         body: validBody,
       });
 
-      assert.equal(response.errCode, 2);
-      assert.equal(response.httpStatus, 409);
-      assert.equal(loaded.calls.some(({ sql }) => /UPDATE payment_refunds/i.test(sql)), false);
+      if (refundOverride.refundMode === "PAYOS") {
+        assert.equal(response.errCode, 0);
+        assert.equal(statefulRefundMode(response), "PAYOS");
+      } else {
+        assert.equal(response.errCode, 2);
+        assert.equal(response.httpStatus, 409);
+        assert.equal(loaded.calls.some(({ sql }) => /UPDATE payment_refunds/i.test(sql)), false);
+      }
     } finally {
       loaded.restore();
     }
   }
 });
+
+const statefulRefundMode = (response) => response.data?.refundMode;
 
 test("manual refund update validation keeps reason optional", { concurrency: false }, () => {
   const loaded = loadRefundService(buildState());

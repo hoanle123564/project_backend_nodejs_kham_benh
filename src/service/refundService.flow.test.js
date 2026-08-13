@@ -70,7 +70,7 @@ const loadRefundService = (state, provider) => {
 };
 
 test("approve commits RFS5 before PayOS HTTP and preserves an inconclusive outcome", { concurrency: false }, async () => {
-  const state = { committed: false, refund: { id: 7, paymentId: 10, bookingId: 20, amount: 100000, statusId: "RFS1", refundMode: "PAYOS", paymentStatusId: "PPS2", referenceId: "REFUND_7", idempotencyKey: "refund:7", receiverBankBin: "970415", receiverAccountNumber: "0123456789" } };
+  const state = { committed: false, refund: { id: 7, paymentId: 10, bookingId: 20, amount: 100000, statusId: "RFS1", refundMode: "PAYOS", paymentStatusId: "PPS2", referenceId: "REFUND_7", idempotencyKey: "refund:7", receiverBankBin: "970415", receiverBank: "VCB", receiverAccountName: "NGUYEN VAN A", receiverAccountNumber: "0123456789" } };
   const calls = [];
   const loaded = loadRefundService(state, {
     createPayout: async (options) => {
@@ -90,8 +90,24 @@ test("approve commits RFS5 before PayOS HTTP and preserves an inconclusive outco
   }
 });
 
+test("approval refuses an incomplete receiver without changing state or calling PayOS", { concurrency: false }, async () => {
+  const state = { committed: false, refund: { id: 70, paymentId: 71, bookingId: 72, amount: 100000, statusId: "RFS1", refundMode: "PAYOS", paymentStatusId: "PPS2", referenceId: "REFUND_70", idempotencyKey: "refund:70", receiverBank: "VCB", receiverAccountNumber: "0123456789" } };
+  let providerCalls = 0;
+  const loaded = loadRefundService(state, { createPayout: async () => { providerCalls += 1; return { payout: null }; } });
+  try {
+    const response = await loaded.service.approvePayosRefund({ refundId: 70, actor: { id: 99, roleId: "R1" } });
+    assert.equal(response.errCode, 1);
+    assert.equal(response.httpStatus, 422);
+    assert.equal(state.refund.statusId, "RFS1");
+    assert.equal(state.committed, false);
+    assert.equal(providerCalls, 0);
+  } finally {
+    loaded.restore();
+  }
+});
+
 test("RFS5 sync looks up by reference before retrying with the same idempotency key", { concurrency: false }, async () => {
-  const state = { committed: false, refund: { id: 8, paymentId: 11, bookingId: 21, amount: 100000, statusId: "RFS5", refundMode: "PAYOS", paymentStatusId: "PPS2", referenceId: "REFUND_8", idempotencyKey: "refund:8", receiverBankBin: "970415", receiverAccountNumber: "0123456789" } };
+  const state = { committed: false, refund: { id: 8, paymentId: 11, bookingId: 21, amount: 100000, statusId: "RFS5", refundMode: "PAYOS", paymentStatusId: "PPS2", referenceId: "REFUND_8", idempotencyKey: "refund:8", receiverBankBin: "970415", receiverBank: "VCB", receiverAccountName: "NGUYEN VAN A", receiverAccountNumber: "0123456789" } };
   const calls = [];
   const loaded = loadRefundService(state, {
     getPayoutsByReference: async (options) => {
@@ -116,7 +132,7 @@ test("RFS5 sync looks up by reference before retrying with the same idempotency 
 });
 
 test("HTTP 403 IP rejection is persisted while RFS5 and PPS2 remain unchanged", { concurrency: false }, async () => {
-  const state = { committed: false, refund: { id: 9, paymentId: 12, bookingId: 22, amount: 10000, statusId: "RFS1", refundMode: "PAYOS", paymentStatusId: "PPS2", referenceId: "REFUND_9", idempotencyKey: "refund:9", receiverBankBin: "970418", receiverAccountNumber: "0123456789" } };
+  const state = { committed: false, refund: { id: 9, paymentId: 12, bookingId: 22, amount: 10000, statusId: "RFS1", refundMode: "PAYOS", paymentStatusId: "PPS2", referenceId: "REFUND_9", idempotencyKey: "refund:9", receiverBankBin: "970418", receiverBank: "VCB", receiverAccountName: "NGUYEN VAN A", receiverAccountNumber: "0123456789" } };
   const loaded = loadRefundService(state, {
     createPayout: async () => ({
       statusCode: 403,
@@ -142,7 +158,7 @@ test("HTTP 403 IP rejection is persisted while RFS5 and PPS2 remain unchanged", 
 });
 
 test("RFS5 HTTP 403 sync never retries POST before the IP issue is resolved", { concurrency: false }, async () => {
-  const state = { committed: false, refund: { id: 10, paymentId: 32, bookingId: 158, amount: 10000, statusId: "RFS5", refundMode: "PAYOS", paymentStatusId: "PPS2", referenceId: "REFUND_10", idempotencyKey: "refund:10", receiverBankBin: "970418", receiverAccountNumber: "0123456789" } };
+  const state = { committed: false, refund: { id: 10, paymentId: 32, bookingId: 158, amount: 10000, statusId: "RFS5", refundMode: "PAYOS", paymentStatusId: "PPS2", referenceId: "REFUND_10", idempotencyKey: "refund:10", receiverBankBin: "970418", receiverBank: "VCB", receiverAccountName: "NGUYEN VAN A", receiverAccountNumber: "0123456789" } };
   const calls = [];
   const loaded = loadRefundService(state, {
     getPayoutsByReference: async () => {

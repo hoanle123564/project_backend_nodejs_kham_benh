@@ -14,6 +14,7 @@ const {
   isValidPayosIdempotencyKey,
   validatePayosPayoutConfig,
 } = require("./payosPayoutService");
+const { createAdminRefundNotifications } = require("./notificationService");
 
 const PAYOS_MODE = "PAYOS";
 const PAYOS_TERMINAL_FAILURES = new Set(["FAILED", "REJECTED", "CANCELLED", "DECLINED"]);
@@ -105,6 +106,12 @@ const validatePatientRefundRequest = (body = {}) => {
 
 const validatePatientManualRefundUpdateRequest = (body = {}) =>
   validatePatientRefundDetails(body, PATIENT_REFUND_UPDATE_FIELDS);
+
+const hasPayosReceiverDetails = (refund = {}) =>
+  /^\d{6,10}$/.test(String(refund.receiverBankBin || "").trim()) &&
+  Boolean(String(refund.receiverBank || "").trim()) &&
+  Boolean(String(refund.receiverAccountNumber || "").trim()) &&
+  Boolean(String(refund.receiverAccountName || "").trim());
 
 const REFUND_DETAIL_SELECT = `
   SELECT
@@ -198,6 +205,11 @@ const createPatientRefund = async ({ user, body }) => {
     if (refundId?.notFound) return result(404, "Booking not found", undefined, 404);
     if (refundId?.conflict) return result(2, refundId.conflict, undefined, 409);
     const data = await readRefundRow(refundId.id);
+    try {
+      await createAdminRefundNotifications({ bookingId: data.bookingId });
+    } catch (notificationError) {
+      // A notification outage must not turn a committed refund request into a failed request.
+    }
     return result(0, "Refund request created", data, 201);
   } catch (error) {
     if (error?.code === "ER_DUP_ENTRY") return result(2, "A refund request already exists for this payment", undefined, 409);
@@ -237,7 +249,7 @@ const updatePatientManualRefund = async ({ user, bookingId, body }) => {
       );
       const payment = payments[0];
       if (!payment || payment.statusId !== PAYMENT_STATUS.REFUND_PENDING) {
-        return { conflict: "Payment is not awaiting a manual refund" };
+        return { conflict: "Payment is not awaiting a refund" };
       }
 
       const [refunds] = await db.query(
@@ -245,18 +257,18 @@ const updatePatientManualRefund = async ({ user, bookingId, body }) => {
         [payment.id, booking.id],
       );
       const refund = refunds[0];
-      if (!refund) return { conflict: "Manual refund record not found" };
-      if (refund.refundMode !== "MANUAL" || refund.statusId !== REFUND_STATUS.PENDING) {
-        return { conflict: "Manual refund is no longer editable" };
+      if (!refund) return { conflict: "Refund record not found" };
+      if (!["MANUAL", PAYOS_MODE].includes(refund.refundMode) || refund.statusId !== REFUND_STATUS.PENDING) {
+        return { conflict: "Refund is no longer editable" };
       }
 
       const update = await db.query(
         `UPDATE payment_refunds
          SET receiverBankBin = ?, receiverBank = ?, receiverAccountNumber = ?, receiverAccountName = ?, reason = ?
-         WHERE id = ? AND refundMode = ? AND statusId = ?`,
-        [bankBin, bankName, bankAccountNumber, bankAccountName, reason, refund.id, "MANUAL", REFUND_STATUS.PENDING],
+         WHERE id = ? AND statusId = ?`,
+        [bankBin, bankName, bankAccountNumber, bankAccountName, reason, refund.id, REFUND_STATUS.PENDING],
       );
-      if (!update[0]?.affectedRows) return { conflict: "Manual refund is no longer editable" };
+      if (!update[0]?.affectedRows) return { conflict: "Refund is no longer editable" };
       return { id: refund.id };
     });
 
@@ -340,6 +352,9 @@ const approvePayosRefund = async ({ refundId, actor, clinicId = null }) => {
   const existing = await getCurrentRefundOr404(refundId, clinicId);
   const scopeError = ensureScopedPayosRefund(existing);
   if (scopeError) return result(scopeError.errCode, scopeError.message, undefined, scopeError.httpStatus);
+  if (!hasPayosReceiverDetails(existing)) {
+    return result(1, "Patient refund account is incomplete", undefined, 422);
+  }
   let config;
   try {
     config = validatePayosPayoutConfig();
@@ -680,6 +695,7 @@ module.exports = {
   rejectPayosRefund,
   startPayosRefundScheduler,
   syncPayosRefund,
+  hasPayosReceiverDetails,
   updatePatientManualRefund,
   validatePatientManualRefundUpdateRequest,
   validatePatientRefundRequest,
