@@ -22,6 +22,95 @@ const { createOnlineBookingPayment, getPublicPaymentStatus } = require("./paymen
 
 const CAPACITY_EXCLUDED_STATUS_IDS = getCapacityExcludedStatusIds();
 const activeStatusPlaceholders = () => CAPACITY_EXCLUDED_STATUS_IDS.map(() => "?").join(", ");
+const PATIENT_APPOINTMENT_STATUS_IDS = new Set(["S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8"]);
+const PATIENT_APPOINTMENT_TYPE_IDS = new Set(["AT1", "AT2"]);
+const PATIENT_APPOINTMENT_SEARCH_MAX_LENGTH = 100;
+
+const getPatientAppointmentQueryValue = (query, key) => {
+  const value = query?.[key];
+
+  if (value === undefined || value === null || value === "") {
+    return { value: "" };
+  }
+
+  if (typeof value !== "string" || Array.isArray(value)) {
+    return { error: `Invalid ${key}.` };
+  }
+
+  return { value: value.trim() };
+};
+
+const normalizePatientAppointmentFilters = (query = {}) => {
+  const filters = {};
+  const filterKeys = ["startDate", "endDate", "statusId", "appointmentTypeId", "search"];
+
+  for (const key of filterKeys) {
+    const result = getPatientAppointmentQueryValue(query, key);
+    if (result.error) {
+      return { errMessage: result.error };
+    }
+    filters[key] = result.value;
+  }
+
+  const hasStartDate = Boolean(filters.startDate);
+  const hasEndDate = Boolean(filters.endDate);
+  if (hasStartDate !== hasEndDate) {
+    return { errMessage: "Start date and end date are required together." };
+  }
+
+  if (
+    (hasStartDate && !moment.utc(filters.startDate, "YYYY-MM-DD", true).isValid()) ||
+    (hasEndDate && !moment.utc(filters.endDate, "YYYY-MM-DD", true).isValid())
+  ) {
+    return { errMessage: "Invalid appointment date range." };
+  }
+
+  if (hasStartDate && filters.startDate > filters.endDate) {
+    return { errMessage: "Start date must not be after end date." };
+  }
+
+  if (filters.statusId && !PATIENT_APPOINTMENT_STATUS_IDS.has(filters.statusId)) {
+    return { errMessage: "Invalid booking status." };
+  }
+
+  if (filters.appointmentTypeId && !PATIENT_APPOINTMENT_TYPE_IDS.has(filters.appointmentTypeId)) {
+    return { errMessage: "Invalid appointment type." };
+  }
+
+  if (filters.search.length > PATIENT_APPOINTMENT_SEARCH_MAX_LENGTH) {
+    return { errMessage: "Search query is too long." };
+  }
+
+  return { filters, errMessage: "" };
+};
+
+const buildPatientAppointmentWhereClause = (patientId, filters = {}) => {
+  const conditions = ["b.patientId = ?"];
+  const params = [patientId];
+
+  if (filters.startDate && filters.endDate) {
+    conditions.push("b.date BETWEEN ? AND ?");
+    params.push(filters.startDate, filters.endDate);
+  }
+
+  if (filters.statusId) {
+    conditions.push("b.statusId = ?");
+    params.push(filters.statusId);
+  }
+
+  if (filters.appointmentTypeId) {
+    conditions.push("s.appointmentTypeId = ?");
+    params.push(filters.appointmentTypeId);
+  }
+
+  if (filters.search) {
+    const searchTerm = `%${filters.search}%`;
+    conditions.push("(CAST(b.id AS CHAR) LIKE ? OR CONCAT_WS(' ', u.firstName, u.lastName) LIKE ?)");
+    params.push(searchTerm, searchTerm);
+  }
+
+  return { conditions, params };
+};
 
 // Tạo link xác nhận lịch gửi qua email cho bệnh nhân.
 const buildUrlEmail = (scheduleId, token) => {
@@ -437,9 +526,10 @@ const AllPatient = async () => {
 };
 
 // Lấy danh sách lịch hẹn của một bệnh nhân kèm STT, trạng thái và thông tin bác sĩ.
-const ListBookingForPatient = async (patientId) => {
+const ListBookingForPatient = async (patientId, filters = {}) => {
   const status = {};
   try {
+    const { conditions, params } = buildPatientAppointmentWhereClause(patientId, filters);
     const [rows] = await connection.promise().query(
       `
         SELECT
@@ -532,10 +622,10 @@ const ListBookingForPatient = async (patientId) => {
         LEFT JOIN lookup lat
           ON s.appointmentTypeId = lat.keyMap
          AND lat.type = 'APPOINTMENT_TYPE'
-        WHERE b.patientId = ?
-        ORDER BY b.date DESC, COALESCE(bq.queueNumber, 999999) ASC, COALESCE(TIME_TO_SEC(s.startTime), CAST(SUBSTRING(s.timeType, 2) AS UNSIGNED)) ASC
+        WHERE ${conditions.join("\n          AND ")}
+        ORDER BY b.createdAt DESC, b.id DESC
       `,
-      [patientId]
+      params
     );
 
     status.errCode = 0;
@@ -576,6 +666,8 @@ module.exports = {
   bookAppointment,
   normalizeOptionalReason,
   isValidBookingPrice,
+  normalizePatientAppointmentFilters,
+  buildPatientAppointmentWhereClause,
   verifyBookAppointment,
   AllPatient,
   ListBookingForPatient,

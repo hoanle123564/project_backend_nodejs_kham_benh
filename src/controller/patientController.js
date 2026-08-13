@@ -1,4 +1,11 @@
-const { bookAppointment, verifyBookAppointment, AllPatient, ListBookingForPatient, cancelBookAppointment } = require("../service/PatientService");
+const {
+    bookAppointment,
+    verifyBookAppointment,
+    AllPatient,
+    ListBookingForPatient,
+    normalizePatientAppointmentFilters,
+    cancelBookAppointment,
+} = require("../service/PatientService");
 const { getPatientProfile, updatePatientProfile } = require("../service/patientProfileService");
 const {
     FORBIDDEN_RESPONSE,
@@ -55,14 +62,24 @@ const getListBookingForPatient = async (req, res) => {
             return res.status(403).json(FORBIDDEN_RESPONSE);
         }
 
-        let patientId = req.user.id;
-        let respone = await ListBookingForPatient(patientId);
+        const normalizedFilters = normalizePatientAppointmentFilters(req.query);
+        if (normalizedFilters.errMessage) {
+            return res.status(400).json({
+                errCode: 1,
+                errMessage: normalizedFilters.errMessage,
+                data: [],
+            });
+        }
+
+        const patientId = req.user.id;
+        let respone = await ListBookingForPatient(patientId, normalizedFilters.filters);
         return res.status(200).json(respone);
     } catch (error) {
         console.log("getListBookingForPatient error", error);
         return res.status(400).json({
             errCode: -1,
             errMessage: "Error from server",
+            data: [],
         });
     }
 };
