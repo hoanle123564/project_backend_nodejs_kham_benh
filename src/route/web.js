@@ -120,6 +120,10 @@ const {
   markMyDoctorNotificationsRead,
 } = require("../controller/doctorNotificationController");
 const {
+  getMyAdminNotifications,
+  markMyAdminNotificationsRead,
+} = require("../controller/adminNotificationController");
+const {
   getMyPatientNotifications,
   markMyPatientNotificationsRead,
 } = require("../controller/patientNotificationController");
@@ -234,6 +238,9 @@ router.get("/api/admin/medical-records", authMiddleware, adminMiddleware, getAdm
 router.get("/api/admin/bookings", authMiddleware, adminMiddleware, getAdminBookings);
 router.patch("/api/admin/bookings/:bookingId/status", authMiddleware, adminMiddleware, patchAdminBookingStatus);
 router.get("/api/admin/refunds", authMiddleware, adminMiddleware, getAdminRefunds);
+router.get("/api/admin/notifications", authMiddleware, adminMiddleware, getMyAdminNotifications);
+router.patch("/api/admin/notifications/read", authMiddleware, adminMiddleware, markMyAdminNotificationsRead);
+router.patch("/api/admin/notifications/:notificationId/read", authMiddleware, adminMiddleware, markMyAdminNotificationsRead);
 router.post("/api/admin/refunds/:refundId/confirm", authMiddleware, adminMiddleware, postConfirmRefund);
 router.post("/api/admin/refunds/:refundId/approve", authMiddleware, adminMiddleware, postAdminApproveRefund);
 router.post("/api/admin/refunds/:refundId/reject", authMiddleware, adminMiddleware, postAdminRejectRefund);

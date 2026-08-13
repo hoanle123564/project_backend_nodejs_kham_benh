@@ -1,11 +1,12 @@
 const connection = require("../config/data");
 const { getDb } = require("./transactionService");
 
-const NOTIFICATION_ROLE = Object.freeze({ DOCTOR: "R2", PATIENT: "R3" });
+const NOTIFICATION_ROLE = Object.freeze({ ADMIN: "R1", DOCTOR: "R2", PATIENT: "R3" });
 const NOTIFICATION_TYPE = Object.freeze({
   NEW_MESSAGE: "NEW_MESSAGE",
   BOOKING_STATUS_CHANGED: "BOOKING_STATUS_CHANGED",
   APPOINTMENT_REMINDER: "APPOINTMENT_REMINDER",
+  REFUND_REQUESTED: "REFUND_REQUESTED",
 });
 
 const assertRecipient = (user = {}, role) => {
@@ -40,6 +41,20 @@ const createNotification = async ({
 
 const createDoctorNotification = ({ doctorId, ...data }, db) =>
   createNotification({ ...data, recipientUserId: doctorId, recipientRole: NOTIFICATION_ROLE.DOCTOR }, db);
+
+const createAdminNotification = ({ adminId, ...data }, db) =>
+  createNotification({ ...data, recipientUserId: adminId, recipientRole: NOTIFICATION_ROLE.ADMIN }, db);
+
+const createAdminRefundNotifications = async ({ bookingId }, db) => {
+  const [admins] = await getDb(db).query("SELECT id FROM users WHERE roleId = 'R1'");
+  for (const admin of admins || []) {
+    await createAdminNotification({
+      adminId: admin.id,
+      bookingId,
+      type: NOTIFICATION_TYPE.REFUND_REQUESTED,
+    }, db);
+  }
+};
 
 const createPatientNotification = ({ patientId, ...data }, db) =>
   createNotification({ ...data, recipientUserId: patientId, recipientRole: NOTIFICATION_ROLE.PATIENT }, db);
@@ -97,6 +112,9 @@ const markNotificationsRead = async (user, role, notificationId) => {
 const getDoctorNotifications = (user) => getNotifications(user, NOTIFICATION_ROLE.DOCTOR);
 const markDoctorNotificationsRead = (user, notificationId) =>
   markNotificationsRead(user, NOTIFICATION_ROLE.DOCTOR, notificationId);
+const getAdminNotifications = (user) => getNotifications(user, NOTIFICATION_ROLE.ADMIN);
+const markAdminNotificationsRead = (user, notificationId) =>
+  markNotificationsRead(user, NOTIFICATION_ROLE.ADMIN, notificationId);
 const getPatientNotifications = (user) => getNotifications(user, NOTIFICATION_ROLE.PATIENT);
 const markPatientNotificationsRead = (user, notificationId) =>
   markNotificationsRead(user, NOTIFICATION_ROLE.PATIENT, notificationId);
@@ -106,9 +124,13 @@ module.exports = {
   NOTIFICATION_TYPE,
   assertRecipient,
   createNotification,
+  createAdminNotification,
+  createAdminRefundNotifications,
   createDoctorNotification,
   createPatientNotification,
   createPatientBookingStatusNotification,
+  getAdminNotifications,
+  markAdminNotificationsRead,
   getDoctorNotifications,
   markDoctorNotificationsRead,
   getPatientNotifications,
