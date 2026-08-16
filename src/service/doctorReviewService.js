@@ -1,6 +1,10 @@
 const connection = require("../config/data");
 const { getDb, withTransaction } = require("./transactionService");
-const { createDoctorNotification } = require("./notificationService");
+const {
+  createDoctorNotification,
+  createPatientReviewModerationNotification,
+  NOTIFICATION_TYPE,
+} = require("./notificationService");
 const {
   BOOKING_STATUS,
   LOOKUP_TYPES,
@@ -594,9 +598,9 @@ const updateReviewVisibility = async (user, reviewIdValue, payload = {}) => {
   if (payload.hidden !== true && payload.hidden !== false) {
     return fail("hidden must be true or false");
   }
-  return withTransaction(async (db) => {
+  const result = await withTransaction(async (db) => {
     const [rows] = await db.query(
-      `SELECT id, statusId FROM doctor_reviews WHERE id = ? LIMIT 1 FOR UPDATE`,
+      `SELECT id, bookingId, patientId, statusId FROM doctor_reviews WHERE id = ? LIMIT 1 FOR UPDATE`,
       [reviewId]
     );
     const review = rows[0];
@@ -604,15 +608,38 @@ const updateReviewVisibility = async (user, reviewIdValue, payload = {}) => {
 
     const nextStatusId = payload.hidden ? REVIEW_STATUS.HIDDEN : REVIEW_STATUS.VISIBLE;
     await assertLookupKey(LOOKUP_TYPES.REVIEW_STATUS, nextStatusId, db);
-    if (review.statusId !== nextStatusId) {
+    const changed = review.statusId !== nextStatusId;
+    if (changed) {
       await db.query(
         "UPDATE doctor_reviews SET statusId = ? WHERE id = ?",
         [nextStatusId, reviewId]
       );
     }
 
-    return ok(await getReviewById(reviewId, db));
+    return {
+      review: await getReviewById(reviewId, db),
+      notification: changed
+        ? {
+            patientId: review.patientId,
+            bookingId: review.bookingId,
+            type:
+              nextStatusId === REVIEW_STATUS.HIDDEN
+                ? NOTIFICATION_TYPE.REVIEW_HIDDEN
+                : NOTIFICATION_TYPE.REVIEW_RESTORED,
+          }
+        : null,
+    };
   });
+
+  if (result.notification) {
+    try {
+      await createPatientReviewModerationNotification(result.notification);
+    } catch (notificationError) {
+      console.error("review moderation notification error", notificationError);
+    }
+  }
+
+  return ok(result.review);
 };
 
 module.exports = {

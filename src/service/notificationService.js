@@ -7,6 +7,8 @@ const NOTIFICATION_TYPE = Object.freeze({
   BOOKING_STATUS_CHANGED: "BOOKING_STATUS_CHANGED",
   APPOINTMENT_REMINDER: "APPOINTMENT_REMINDER",
   REFUND_REQUESTED: "REFUND_REQUESTED",
+  REVIEW_HIDDEN: "REVIEW_HIDDEN",
+  REVIEW_RESTORED: "REVIEW_RESTORED",
 });
 
 const assertRecipient = (user = {}, role) => {
@@ -61,6 +63,9 @@ const createPatientNotification = ({ patientId, ...data }, db) =>
 
 const createPatientBookingStatusNotification = (data, db) =>
   createPatientNotification({ ...data, type: NOTIFICATION_TYPE.BOOKING_STATUS_CHANGED }, db);
+
+const createPatientReviewModerationNotification = ({ patientId, bookingId, type }, db) =>
+  createPatientNotification({ patientId, bookingId, reviewId: null, type }, db);
 
 const getNotifications = async (user, role) => {
   assertRecipient(user, role);
@@ -129,6 +134,7 @@ module.exports = {
   createDoctorNotification,
   createPatientNotification,
   createPatientBookingStatusNotification,
+  createPatientReviewModerationNotification,
   getAdminNotifications,
   markAdminNotificationsRead,
   getDoctorNotifications,
