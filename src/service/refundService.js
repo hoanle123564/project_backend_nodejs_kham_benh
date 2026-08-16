@@ -367,7 +367,10 @@ const approvePayosRefund = async ({ refundId, actor, clinicId = null }) => {
       const refund = await getRefundRow(db, refundId, clinicId, true);
       const scopeError = ensureScopedPayosRefund(refund);
       if (scopeError) throw scopeError;
-      if (refund.statusId !== REFUND_STATUS.PENDING || refund.paymentStatusId !== PAYMENT_STATUS.PAID_PENDING_DOCTOR) {
+      if (
+        refund.statusId !== REFUND_STATUS.PENDING ||
+        ![PAYMENT_STATUS.PAID_PENDING_DOCTOR, PAYMENT_STATUS.REFUND_PENDING].includes(refund.paymentStatusId)
+      ) {
         throw conflict("Refund is not ready for approval");
       }
       const idempotencyKey = isValidPayosIdempotencyKey(refund.idempotencyKey)
@@ -540,8 +543,8 @@ const persistProviderOutcome = async ({ refundId, payout, clinicId = null, accep
           [REFUND_STATUS.REFUNDED, identity.transactionId || null, refund.id, REFUND_STATUS.PROCESSING],
         );
         await db.query(
-          "UPDATE appointment_payments SET statusId = ? WHERE id = ? AND statusId = ?",
-          [PAYMENT_STATUS.REFUNDED, payment.id, PAYMENT_STATUS.PAID_PENDING_DOCTOR],
+          "UPDATE appointment_payments SET statusId = ? WHERE id = ? AND statusId IN (?, ?)",
+          [PAYMENT_STATUS.REFUNDED, payment.id, PAYMENT_STATUS.PAID_PENDING_DOCTOR, PAYMENT_STATUS.REFUND_PENDING],
         );
         mapped = true;
       }

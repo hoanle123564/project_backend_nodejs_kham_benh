@@ -2,6 +2,7 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 
 const loadRefundService = (state, provider) => {
+  state.payment = state.payment || { id: state.refund.paymentId, statusId: state.refund.paymentStatusId };
   const db = {
     query: async (sql, params = []) => {
       if (sql.includes("FROM payment_refunds")) return [[{ ...state.refund }]];
@@ -12,6 +13,19 @@ const loadRefundService = (state, provider) => {
         state.refund.approvedBy = 99;
         return [{ affectedRows: 1 }];
       }
+      if (sql.includes("SET statusId = ?, processingAt")) {
+        state.refund.statusId = "RFS2";
+        return [{ affectedRows: 1 }];
+      }
+      if (sql.includes("SET statusId = ?, refundedAt")) {
+        state.refund.statusId = "RFS3";
+        return [{ affectedRows: 1 }];
+      }
+      if (sql.includes("UPDATE appointment_payments SET statusId")) {
+        state.payment.statusId = params[0];
+        state.refund.paymentStatusId = params[0];
+        return [{ affectedRows: 1 }];
+      }
       if (sql.includes("SET idempotencyKey = ? WHERE id = ?")) {
         state.refund.idempotencyKey = params[0];
         return [{ affectedRows: 1 }];
@@ -20,7 +34,7 @@ const loadRefundService = (state, provider) => {
         state.refund.payosProviderState = params[2] || state.refund.payosProviderState;
         return [{ affectedRows: 1 }];
       }
-      return [[{ id: state.refund.paymentId, statusId: "PPS2" }]];
+      return [[{ ...state.payment }]];
     },
   };
   const connection = { promise: () => db };
@@ -31,17 +45,17 @@ const loadRefundService = (state, provider) => {
       return value;
     },
   };
-  const paymentService = { PAYMENT_STATUS: { PAID_PENDING_DOCTOR: "PPS2", REFUNDED: "PPS7" }, REFUND_STATUS: { PENDING: "RFS1", PROCESSING: "RFS2", REFUNDED: "RFS3", FAILED: "RFS4", APPROVED: "RFS5", REJECTED: "RFS6" } };
+  const paymentService = { PAYMENT_STATUS: { PAID_PENDING_DOCTOR: "PPS2", REFUND_PENDING: "PPS6", REFUNDED: "PPS7" }, REFUND_STATUS: { PENDING: "RFS1", PROCESSING: "RFS2", REFUNDED: "RFS3", FAILED: "RFS4", APPROVED: "RFS5", REJECTED: "RFS6" } };
   const payosService = {
     createPayout: provider.createPayout,
     createPayosIdempotencyKey: () => "00000000-0000-4000-8000-000000000999",
     getPayosPayoutConfig: () => ({}),
     getPayoutById: async () => ({ statusCode: 404, payout: null }),
-    getPayoutId: () => "",
-    getPayoutReference: () => "",
+    getPayoutId: (payout) => payout?.id || "",
+    getPayoutReference: (payout) => payout?.referenceId || "",
     getPayoutsByReference: provider.getPayoutsByReference || (async () => ({ statusCode: 200, body: { data: { payouts: {} } }, payouts: [] })),
-    getProviderState: () => null,
-    getTransactionId: () => "",
+    getProviderState: (payout) => payout?.transactions?.[0]?.state || null,
+    getTransactionId: (payout) => payout?.transactions?.[0]?.id || "",
     validatePayosPayoutConfig: () => ({}),
     isValidPayosIdempotencyKey: (value) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || "")),
   };
@@ -85,6 +99,49 @@ test("approve commits RFS5 before PayOS HTTP and preserves an inconclusive outco
     assert.deepEqual(calls, [true]);
     assert.equal(response.httpStatus, 202);
     assert.equal(response.data.statusId, "RFS5");
+  } finally {
+    loaded.restore();
+  }
+});
+
+test("S6 PayOS approval accepts PPS6 and completes a validated payout", { concurrency: false }, async () => {
+  const state = { committed: false, refund: { id: 71, paymentId: 72, bookingId: 73, amount: 100000, statusId: "RFS1", refundMode: "PAYOS", paymentStatusId: "PPS6", referenceId: "REFUND_71", idempotencyKey: "refund:71", receiverBankBin: "970415", receiverBank: "VCB", receiverAccountName: "NGUYEN VAN A", receiverAccountNumber: "0123456789" } };
+  const loaded = loadRefundService(state, {
+    createPayout: async () => {
+      assert.equal(state.refund.statusId, "RFS5");
+      return {
+        statusCode: 200,
+        payout: {
+          id: "payout-71",
+          referenceId: "REFUND_71",
+          amount: 100000,
+          toBin: "970415",
+          toAccountNumber: "0123456789",
+          transactions: [{ id: "transaction-71", referenceId: "REFUND_71", amount: 100000, toBin: "970415", toAccountNumber: "0123456789", state: "SUCCEEDED" }],
+        },
+      };
+    },
+  });
+  try {
+    const response = await loaded.service.approvePayosRefund({ refundId: 71, actor: { id: 99, roleId: "R1" } });
+    assert.equal(response.errCode, 0);
+    assert.equal(response.data.statusId, "RFS3");
+    assert.equal(response.data.paymentStatusId, "PPS7");
+    assert.equal(state.payment.statusId, "PPS7");
+  } finally {
+    loaded.restore();
+  }
+});
+
+test("approval keeps rejecting non-refundable payment states", { concurrency: false }, async () => {
+  const state = { committed: false, refund: { id: 74, paymentId: 75, bookingId: 76, amount: 100000, statusId: "RFS1", refundMode: "PAYOS", paymentStatusId: "PPS3", referenceId: "REFUND_74", idempotencyKey: "refund:74", receiverBankBin: "970415", receiverBank: "VCB", receiverAccountName: "NGUYEN VAN A", receiverAccountNumber: "0123456789" } };
+  let providerCalls = 0;
+  const loaded = loadRefundService(state, { createPayout: async () => { providerCalls += 1; return { payout: null }; } });
+  try {
+    const response = await loaded.service.approvePayosRefund({ refundId: 74, actor: { id: 99, roleId: "R1" } });
+    assert.equal(response.httpStatus, 409);
+    assert.equal(state.refund.statusId, "RFS1");
+    assert.equal(providerCalls, 0);
   } finally {
     loaded.restore();
   }
