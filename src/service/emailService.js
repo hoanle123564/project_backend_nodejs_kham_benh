@@ -265,10 +265,10 @@ const sendAppointmentReminderEmail = async (dataSend = {}) => {
         <h3>Xin chao ${escapeHtml(dataSend.patientName || "ban")}!</h3>
         <p>Lịch khám của bạn sắp bắt đầu trong 30 phút sắp tới</p>
         <div style="margin:16px 0; padding:14px; background:#f0fdfa; border-left:4px solid #0f766e; border-radius:6px;">
-          <p style="margin:6px 0;"><b>Thoi gian:</b> ${escapeHtml(dataSend.appointmentTime || "")}</p>
-          <p style="margin:6px 0;"><b>Ngay kham:</b> ${escapeHtml(dataSend.appointmentDate || "")}</p>
-          <p style="margin:6px 0;"><b>Bac si:</b> ${escapeHtml(dataSend.doctorName || "")}</p>
-          <p style="margin:6px 0;"><b>Phong kham:</b> ${escapeHtml(dataSend.clinicName || "")}</p>
+          <p style="margin:6px 0;"><b>Thời gian:</b> ${escapeHtml(dataSend.appointmentTime || "")}</p>
+          <p style="margin:6px 0;"><b>Ngày khám:</b> ${escapeHtml(dataSend.appointmentDate || "")}</p>
+          <p style="margin:6px 0;"><b>Bác sĩ:</b> ${escapeHtml(dataSend.doctorName || "")}</p>
+          <p style="margin:6px 0;"><b>Phòng khám:</b> ${escapeHtml(dataSend.clinicName || "")}</p>
         </div>
         <p>Vui lòng đến đúng hẹn.</p>
       </div>

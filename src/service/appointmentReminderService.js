@@ -240,7 +240,7 @@ const buildReminderPayload = (reminder) => {
     clinicName: reminder.clinicName || "",
     appointmentDate,
     appointmentTime,
-    message: `LifeCare reminder: Lịch hẹn của bạn sắp bắt đầu với ${doctorName} is at ${appointmentTime} on ${appointmentDate}.`,
+    message: `LifeCare nhắc lịch khám bệnh: Lịch hẹn của bạn sắp bắt đầu với ${doctorName} is at ${appointmentTime} on ${appointmentDate}.`,
   };
 };
 
