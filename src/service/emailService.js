@@ -288,6 +288,9 @@ const sendAppointmentReminderEmail = async (dataSend = {}) => {
           <p style="margin:6px 0;"><b>Bác sĩ:</b> ${escapeHtml(dataSend.doctorName || "")}</p>
           <p style="margin:6px 0;"><b>Phòng khám:</b> ${escapeHtml(dataSend.clinicName || "")}</p>
         </div>
+        <p style="margin:12px 0; padding:10px 12px; border:1px solid #fecaca; border-left:4px solid #dc2626; border-radius:6px; background:#fef2f2; color:#b91c1c;">
+          <b>Lưu ý:</b> Nếu bạn đến trễ so với thời gian bắt đầu khám, bác sĩ có quyền đánh dấu bạn vắng mặt/không đến khám.
+        </p>
         <p>Vui lòng đến đúng hẹn.</p>
       </div>
     `,
