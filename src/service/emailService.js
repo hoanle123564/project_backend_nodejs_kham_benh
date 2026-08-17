@@ -44,23 +44,41 @@ const formatDateValue = (value) => {
 const paraclinicalTypeLabels = {
   XET_NGHIEM: "X&eacute;t nghi&#7879;m",
   CHAN_DOAN_HINH_ANH: "Ch&#7849;n &#273;o&aacute;n h&igrave;nh &#7843;nh",
+  THAM_DO_CHUC_NANG: "Th&#259;m d&ograve; ch&#7913;c n&#259;ng",
+  NOI_SOI: "N&#7897;i soi",
+  GIAI_PHAU_BENH: "Gi&#7843;i ph&#7851;u b&#7879;nh",
   KHAC: "Kh&aacute;c",
+};
+
+const dosageFormLabels = {
+  TABLET: "D&#7841;ng vi&#234;n",
+  POWDER: "D&#7841;ng b&#7897;t",
+  LIQUID: "D&#7841;ng l&#7887;ng",
+  INJECTION: "D&#7841;ng ti&#234;m",
+  TOPICAL: "D&#7841;ng b&ocirc;i",
+  DROPS: "D&#7841;ng nh&#7887;",
+  SPRAY: "D&#7841;ng x&#7883;t",
+  OTHER: "D&#7841;ng kh&aacute;c",
 };
 
 const buildPrescriptionTableRows = (items = []) => {
   return items
     .map(
-      (item) => `
+      (item) => {
+        const dosageFormLabel = dosageFormLabels[item.dosageForm] || escapeHtml(item.dosageForm);
+
+        return `
         <tr>
           <td style="padding:10px; border:1px solid #d8e0ea;">${escapeHtml(item.medicineName)}</td>
           <td style="padding:10px; border:1px solid #d8e0ea; text-align:center;">${formatQuantity(item.morningQty)}</td>
           <td style="padding:10px; border:1px solid #d8e0ea; text-align:center;">${formatQuantity(item.noonQty)}</td>
           <td style="padding:10px; border:1px solid #d8e0ea; text-align:center;">${formatQuantity(item.afternoonQty)}</td>
           <td style="padding:10px; border:1px solid #d8e0ea; text-align:center;">${formatQuantity(item.eveningQty)}</td>
-          <td style="padding:10px; border:1px solid #d8e0ea;">${escapeHtml(item.dosageForm)}</td>
+          <td style="padding:10px; border:1px solid #d8e0ea;">${dosageFormLabel}</td>
           <td style="padding:10px; border:1px solid #d8e0ea;">${escapeHtml(item.instruction)}</td>
         </tr>
-      `
+      `;
+      }
     )
     .join("");
 };
