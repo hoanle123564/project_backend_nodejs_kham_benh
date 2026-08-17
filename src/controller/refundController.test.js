@@ -29,11 +29,12 @@ const loadController = (mocks) => {
 test("R4 refund list and action derive clinic scope from JWT", { concurrency: false }, async () => {
   let listedClinicId = null;
   let approvedClinicId = null;
+  let rejectedOptions = null;
   const controller = loadController({
     "../service/refundService": {
       listManagementRefunds: async (clinicId) => { listedClinicId = clinicId; return { errCode: 0, errMessage: "OK", data: [] }; },
       approvePayosRefund: async (options) => { approvedClinicId = options.clinicId; return { errCode: 0, errMessage: "OK", data: {}, httpStatus: 202 }; },
-      rejectPayosRefund: async () => ({ errCode: 0, errMessage: "OK", data: {} }),
+      rejectPayosRefund: async (options) => { rejectedOptions = options; return { errCode: 0, errMessage: "OK", data: {} }; },
       syncPayosRefund: async () => ({ errCode: 0, errMessage: "OK", data: {} }),
       createPatientRefund: async () => ({ errCode: 0, errMessage: "OK", data: {} }),
       listPatientRefunds: async () => ({ errCode: 0, errMessage: "OK", data: [] }),
@@ -55,6 +56,20 @@ test("R4 refund list and action derive clinic scope from JWT", { concurrency: fa
   assert.equal(approveRes.statusCode, 202);
   assert.equal(approvedClinicId, 42);
   assert.equal(Object.prototype.hasOwnProperty.call(approveRes.body, "httpStatus"), false);
+
+  const rejectRes = response();
+  await controller.postClinicManagerRejectRefund({
+    user: { id: 8, roleId: "R4" },
+    params: { refundId: "7" },
+    body: { rejectionReason: "Account details are invalid" },
+  }, rejectRes);
+  assert.equal(rejectRes.statusCode, 200);
+  assert.deepEqual(rejectedOptions, {
+    refundId: "7",
+    actor: { id: 8, roleId: "R4" },
+    clinicId: 42,
+    reason: "Account details are invalid",
+  });
 });
 
 test("patient refund endpoint preserves 201 envelope and rejects non-patients", { concurrency: false }, async () => {

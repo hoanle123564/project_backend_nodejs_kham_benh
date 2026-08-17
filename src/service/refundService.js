@@ -14,7 +14,7 @@ const {
   isValidPayosIdempotencyKey,
   validatePayosPayoutConfig,
 } = require("./payosPayoutService");
-const { createAdminRefundNotifications } = require("./notificationService");
+const { createAdminRefundNotifications, createPatientNotification, NOTIFICATION_TYPE } = require("./notificationService");
 
 const PAYOS_MODE = "PAYOS";
 const PAYOS_TERMINAL_FAILURES = new Set(["FAILED", "REJECTED", "CANCELLED", "DECLINED"]);
@@ -418,7 +418,7 @@ const rejectPayosRefund = async ({ refundId, actor, reason, clinicId = null }) =
   const rejectionReason = typeof reason === "string" ? reason.trim() : "";
   if (!rejectionReason || rejectionReason.length > 500) return result(1, "A rejection reason of at most 500 characters is required", undefined, 422);
   try {
-    const updatedId = await withTransaction(async (db) => {
+    const rejectedRefund = await withTransaction(async (db) => {
       const refund = await getRefundRow(db, refundId, clinicId, true);
       const scopeError = ensureScopedPayosRefund(refund);
       if (scopeError) throw scopeError;
@@ -429,9 +429,19 @@ const rejectPayosRefund = async ({ refundId, actor, reason, clinicId = null }) =
          WHERE id = ? AND statusId = ?`,
         [REFUND_STATUS.REJECTED, actor.id, rejectionReason, refund.id, REFUND_STATUS.PENDING],
       );
-      return refund.id;
+      return { id: refund.id, bookingId: refund.bookingId, patientId: refund.patientId };
     });
-    return result(0, "Refund rejected", await getCurrentRefundOr404(updatedId, clinicId));
+    try {
+      await createPatientNotification({
+        patientId: rejectedRefund.patientId,
+        bookingId: rejectedRefund.bookingId,
+        type: NOTIFICATION_TYPE.REFUND_REJECTED,
+        content: rejectionReason,
+      });
+    } catch (notificationError) {
+      // A notification outage must not turn a committed refund rejection into a failed request.
+    }
+    return result(0, "Refund rejected", await getCurrentRefundOr404(rejectedRefund.id, clinicId));
   } catch (error) {
     return result(error.errCode || 1, error.message || "Unable to reject refund", undefined, error.httpStatus || 409);
   }
